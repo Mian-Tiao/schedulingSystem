@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc -t markdown \"docs/Lean Scheduling Assistant.docx\")",
+      "Bash(mkdir -p __TRACKED_VAR__/docx_unpack)",
+      "Bash(python -c ' *)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npx vitest *)",
+      "Bash(node -e ' *)",
+      "Bash(npx tsx *)",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
+      "Bash(npx eslint *)"
+    ]
+  }
+}

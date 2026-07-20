@@ -1,0 +1,124 @@
+// Lean Scheduling Assistant — SQLite schema
+// 陣列/物件欄位以 JSON 字串儲存(SQLite 限制),repository 層負責轉換,
+// 欄位型別刻意保持可直接移植 PostgreSQL。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id                    String   @id @default(cuid())
+  productCode           String   @unique
+  productName           String
+  description           String?
+  /// 每單位加工分鐘數
+  defaultProcessingTime Float
+  defaultCleaningTime   Float    @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  orders ProductionOrder[]
+}
+
+model Machine {
+  id                  String   @id @default(cuid())
+  machineCode         String   @unique
+  machineName         String
+  model               String?
+  description         String?
+  /// JSON string[]:可加工產品 id
+  supportedProductIds String   @default("[]")
+  defaultSetupTime    Float    @default(0)
+  defaultCleaningTime Float    @default(0)
+  /// JSON WorkingHours:{ mon..sun: [{start,end}] }
+  workingHours        String
+  status              String   @default("available") // available | maintenance | disabled
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  downtimes MachineDowntime[]
+}
+
+model MachineDowntime {
+  id        String   @id @default(cuid())
+  machineId String
+  type      String // maintenance | breakdown | plannedStop | other
+  startTime DateTime
+  endTime   DateTime
+  reason    String?
+
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+}
+
+model ChangeoverRule {
+  id             String  @id @default(cuid())
+  /// null = 適用所有機台
+  machineId      String?
+  /// null = 空機(第一張訂單)
+  fromProductId  String?
+  toProductId    String
+  setupMinutes   Float   @default(0)
+  cleaningMinutes Float  @default(0)
+}
+
+model ProductionOrder {
+  id                 String   @id @default(cuid())
+  orderNumber        String   @unique
+  productId          String
+  quantity           Float
+  releaseTime        DateTime
+  dueDate            DateTime
+  /// 分鐘
+  processingTime     Float
+  priority           Int      @default(3)
+  /// JSON string[]:可用機台 id,空 = 所有支援機台
+  eligibleMachineIds String   @default("[]")
+  status             String   @default("pending") // pending | scheduled | inProgress | completed | cancelled
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ScheduleScenario {
+  id                   String   @id
+  name                 String
+  algorithm            String
+  objective            String
+  generatedAt          DateTime
+  /// JSON ScheduleMetrics
+  metrics              String
+  score                Float
+  rank                 Int
+  recommendationReason String
+  isManuallyAdjusted   Boolean  @default(false)
+  /// JSON:原始任務(回復原始排程用)
+  baselineTasks        String
+  /// JSON:未排入訂單 [{orderId, orderNumber, reason}]
+  unscheduledOrders    String   @default("[]")
+  /// 同一次排程執行的批次 id
+  batchId              String
+  anchorTime           DateTime
+
+  tasks ScheduledTask[]
+}
+
+model ScheduledTask {
+  id                 String   @id
+  scenarioId         String
+  orderId            String?
+  machineId          String
+  taskType           String // production | setup | cleaning | maintenance
+  startTime          DateTime
+  endTime            DateTime
+  sequence           Int
+  isManuallyAdjusted Boolean  @default(false)
+
+  scenario ScheduleScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+}

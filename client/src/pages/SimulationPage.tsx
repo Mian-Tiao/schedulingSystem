@@ -1,0 +1,375 @@
+/**
+ * 情境模擬:急單插入、機台故障。純模擬,不寫入正式排程。
+ */
+import { useState } from 'react';
+import { ApiError, apiPost } from '../api/client';
+import { useMachines, useProducts, useScenarios } from '../api/hooks';
+import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading } from '../components/ui';
+import type { Metrics, OrderImpact } from '../types';
+import { fmtDateTime, fmtMinutes, fromLocalInput, pct, toLocalInput } from '../utils/time';
+
+type Tab = 'urgent' | 'breakdown';
+
+interface UrgentResult {
+  baseline: { metrics: Metrics };
+  urgentOrder: { orderNumber: string; processingTime: number };
+  insert:
+    | { ok: true; metrics: Metrics; urgentTardinessMinutes: number | null; affectedOrders: OrderImpact[] }
+    | { ok: false; reason: string };
+  rebuild: {
+    ok: boolean;
+    metrics: Metrics;
+    urgentTardinessMinutes: number | null;
+    affectedOrders: OrderImpact[];
+    unscheduled: { orderNumber: string; reason: string }[];
+  };
+}
+
+interface BreakdownResult {
+  baseline: { metrics: Metrics };
+  breakdown: { machineName: string; startTime: string; estimatedRepairTime: string };
+  withEstimatedRepair: {
+    metrics: Metrics;
+    impacts: OrderImpact[];
+    lateOrders: { orderNumber: string; tardinessMinutes: number; priority: number }[];
+    lateOrderCount: number;
+  };
+  reverseAnalysis: { latestSafeRepairTime: string | null; message: string };
+  suggestions: {
+    minimumLateOrderCount: number;
+    transferMachines: { machineCode: string; machineName: string }[];
+    priorityOrders: string[];
+    negotiableOrders: string[];
+  };
+}
+
+export function SimulationPage() {
+  const { data: scenarios, isLoading } = useScenarios();
+  const { data: products } = useProducts();
+  const { data: machines } = useMachines();
+  const [tab, setTab] = useState<Tab>('urgent');
+  const top = scenarios?.find((s) => s.rank === 1) ?? null;
+
+  const [urgentForm, setUrgentForm] = useState({
+    orderNumber: 'URGENT-001',
+    productId: '',
+    quantity: '10',
+    releaseTime: toLocalInput(new Date()),
+    dueDate: toLocalInput(new Date(Date.now() + 86400_000)),
+    priority: '1',
+  });
+  const [urgentResult, setUrgentResult] = useState<UrgentResult | null>(null);
+  const [urgentBusy, setUrgentBusy] = useState(false);
+  const [urgentError, setUrgentError] = useState('');
+
+  const [bdForm, setBdForm] = useState({
+    machineId: '',
+    startTime: toLocalInput(new Date()),
+    estimatedRepairTime: toLocalInput(new Date(Date.now() + 4 * 3600_000)),
+  });
+  const [bdResult, setBdResult] = useState<BreakdownResult | null>(null);
+  const [bdBusy, setBdBusy] = useState(false);
+  const [bdError, setBdError] = useState('');
+
+  if (isLoading) return <Loading />;
+  if (!top)
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-bold text-slate-800">情境模擬</h1>
+        <EmptyState text="請先到排程中心執行排程,再進行情境模擬。" />
+      </div>
+    );
+
+  const runUrgent = async () => {
+    setUrgentBusy(true);
+    setUrgentError('');
+    setUrgentResult(null);
+    try {
+      const result = await apiPost<UrgentResult>('/api/simulations/urgent-order', {
+        scenarioId: top.scenarioId,
+        order: {
+          orderNumber: urgentForm.orderNumber.trim(),
+          productId: urgentForm.productId || products?.[0]?.id,
+          quantity: Number(urgentForm.quantity),
+          releaseTime: fromLocalInput(urgentForm.releaseTime),
+          dueDate: fromLocalInput(urgentForm.dueDate),
+          priority: Number(urgentForm.priority),
+        },
+      });
+      setUrgentResult(result);
+    } catch (e) {
+      setUrgentError(e instanceof ApiError ? e.message : '模擬失敗,請稍後再試');
+    } finally {
+      setUrgentBusy(false);
+    }
+  };
+
+  const runBreakdown = async () => {
+    setBdBusy(true);
+    setBdError('');
+    setBdResult(null);
+    try {
+      const result = await apiPost<BreakdownResult>('/api/simulations/machine-breakdown', {
+        scenarioId: top.scenarioId,
+        machineId: bdForm.machineId || machines?.[0]?.id,
+        startTime: fromLocalInput(bdForm.startTime),
+        estimatedRepairTime: fromLocalInput(bdForm.estimatedRepairTime),
+      });
+      setBdResult(result);
+    } catch (e) {
+      setBdError(e instanceof ApiError ? e.message : '模擬失敗,請稍後再試');
+    } finally {
+      setBdBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-bold text-slate-800">情境模擬</h1>
+      <Banner tone="info">
+        模擬以目前排名第一的方案({top.algorithm})為基準,結果不會寫入正式排程。
+      </Banner>
+
+      <div className="flex gap-2">
+        <Button variant={tab === 'urgent' ? 'primary' : 'secondary'} onClick={() => setTab('urgent')}>
+          🚨 急單插入
+        </Button>
+        <Button variant={tab === 'breakdown' ? 'primary' : 'secondary'} onClick={() => setTab('breakdown')}>
+          🔧 機台故障
+        </Button>
+      </div>
+
+      {tab === 'urgent' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">急單資料</h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Field label="急單編號" required>
+              <input className={inputCls} value={urgentForm.orderNumber} onChange={(e) => setUrgentForm({ ...urgentForm, orderNumber: e.target.value })} />
+            </Field>
+            <Field label="產品" required>
+              <select className={inputCls} value={urgentForm.productId} onChange={(e) => setUrgentForm({ ...urgentForm, productId: e.target.value })}>
+                {(products ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.productCode} {p.productName}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="數量" required>
+              <input type="number" min="1" className={inputCls} value={urgentForm.quantity} onChange={(e) => setUrgentForm({ ...urgentForm, quantity: e.target.value })} />
+            </Field>
+            <Field label="可開始時間" required>
+              <input type="datetime-local" className={inputCls} value={urgentForm.releaseTime} onChange={(e) => setUrgentForm({ ...urgentForm, releaseTime: e.target.value })} />
+            </Field>
+            <Field label="交期" required>
+              <input type="datetime-local" className={inputCls} value={urgentForm.dueDate} onChange={(e) => setUrgentForm({ ...urgentForm, dueDate: e.target.value })} />
+            </Field>
+            <Field label="優先級">
+              <select className={inputCls} value={urgentForm.priority} onChange={(e) => setUrgentForm({ ...urgentForm, priority: e.target.value })}>
+                {[1, 2, 3].map((p) => (
+                  <option key={p} value={p}>
+                    {p}(急單通常為 1)
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="mt-3">
+            <Button onClick={runUrgent} disabled={urgentBusy}>
+              {urgentBusy ? '模擬中…' : '▶ 執行急單模擬'}
+            </Button>
+          </div>
+          {urgentError && <ErrorState message={urgentError} />}
+
+          {urgentResult && (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-md border border-slate-200 p-3">
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">策略一:插入目前排程(既有訂單不動)</h3>
+                {urgentResult.insert.ok ? (
+                  <>
+                    <MetricsCompare before={urgentResult.baseline.metrics} after={urgentResult.insert.metrics} />
+                    <p className="mt-2 text-sm">
+                      急單預計{' '}
+                      {urgentResult.insert.urgentTardinessMinutes === 0 ? (
+                        <Badge tone="green">✓ 準時完成</Badge>
+                      ) : (
+                        <Badge tone="red">延遲 {fmtMinutes(urgentResult.insert.urgentTardinessMinutes ?? 0)}</Badge>
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">此策略不影響任何既有訂單。</p>
+                  </>
+                ) : (
+                  <Banner tone="error">{urgentResult.insert.reason}</Banner>
+                )}
+              </div>
+              <div className="rounded-md border border-slate-200 p-3">
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">策略二:重新計算全部排程(含急單)</h3>
+                <MetricsCompare before={urgentResult.baseline.metrics} after={urgentResult.rebuild.metrics} />
+                <p className="mt-2 text-sm">
+                  急單預計{' '}
+                  {urgentResult.rebuild.urgentTardinessMinutes === 0 ? (
+                    <Badge tone="green">✓ 準時完成</Badge>
+                  ) : (
+                    <Badge tone="red">延遲 {fmtMinutes(urgentResult.rebuild.urgentTardinessMinutes ?? 0)}</Badge>
+                  )}
+                </p>
+                {urgentResult.rebuild.affectedOrders.length > 0 ? (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-slate-600">受影響的訂單:</p>
+                    <ImpactTable impacts={urgentResult.rebuild.affectedOrders} />
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500">沒有訂單受影響。</p>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === 'breakdown' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">故障資訊</h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Field label="故障機台" required>
+              <select className={inputCls} value={bdForm.machineId} onChange={(e) => setBdForm({ ...bdForm, machineId: e.target.value })}>
+                {(machines ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.machineCode} {m.machineName}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="故障開始時間" required>
+              <input type="datetime-local" className={inputCls} value={bdForm.startTime} onChange={(e) => setBdForm({ ...bdForm, startTime: e.target.value })} />
+            </Field>
+            <Field label="預估修復時間" required>
+              <input type="datetime-local" className={inputCls} value={bdForm.estimatedRepairTime} onChange={(e) => setBdForm({ ...bdForm, estimatedRepairTime: e.target.value })} />
+            </Field>
+          </div>
+          <div className="mt-3">
+            <Button onClick={runBreakdown} disabled={bdBusy}>
+              {bdBusy ? '模擬中…' : '▶ 執行故障模擬'}
+            </Button>
+          </div>
+          {bdError && <ErrorState message={bdError} />}
+
+          {bdResult && (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-md border border-slate-200 p-3">
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">
+                  情境一:按預估修復時間({fmtDateTime(bdResult.breakdown.estimatedRepairTime)} 修復)
+                </h3>
+                <MetricsCompare before={bdResult.baseline.metrics} after={bdResult.withEstimatedRepair.metrics} />
+                {bdResult.withEstimatedRepair.lateOrders.length === 0 ? (
+                  <Banner tone="success">在此修復時間下,沒有訂單會逾期。</Banner>
+                ) : (
+                  <>
+                    <p className="mt-2 text-sm text-red-600">將有 {bdResult.withEstimatedRepair.lateOrderCount} 張訂單逾期:</p>
+                    <ul className="mt-1 space-y-0.5 text-sm">
+                      {bdResult.withEstimatedRepair.lateOrders.map((o) => (
+                        <li key={o.orderNumber}>
+                          {o.orderNumber} — 延遲 {fmtMinutes(o.tardinessMinutes)}
+                          {o.priority <= 2 && <Badge tone="red"> 重要訂單</Badge>}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-md border border-slate-200 p-3">
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">情境二:反向分析 — 最晚何時要修好?</h3>
+                <Banner tone={bdResult.reverseAnalysis.latestSafeRepairTime ? 'info' : 'warn'}>
+                  {bdResult.reverseAnalysis.latestSafeRepairTime
+                    ? `最晚須於 ${fmtDateTime(bdResult.reverseAnalysis.latestSafeRepairTime)} 前修復,重要訂單(優先級 ≤ 2)才不會逾期。`
+                    : bdResult.reverseAnalysis.message}
+                </Banner>
+              </div>
+
+              {bdResult.withEstimatedRepair.lateOrders.length > 0 && (
+                <div className="rounded-md border border-slate-200 p-3">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-700">建議</h3>
+                  <ul className="space-y-1 text-sm text-slate-600">
+                    <li>・最少會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
+                    <li>
+                      ・可考慮轉移工作到:
+                      {bdResult.suggestions.transferMachines.length > 0
+                        ? bdResult.suggestions.transferMachines.map((m) => `${m.machineCode} ${m.machineName}`).join('、')
+                        : '(沒有其他機台可支援)'}
+                    </li>
+                    {bdResult.suggestions.priorityOrders.length > 0 && (
+                      <li>・建議優先處理:{bdResult.suggestions.priorityOrders.join('、')}</li>
+                    )}
+                    {bdResult.suggestions.negotiableOrders.length > 0 && (
+                      <li>・可與客戶協調交期:{bdResult.suggestions.negotiableOrders.join('、')}</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) {
+  const rows = [
+    { label: '準時交貨率', b: pct(before.onTimeDeliveryRate), a: pct(after.onTimeDeliveryRate), good: after.onTimeDeliveryRate >= before.onTimeDeliveryRate },
+    { label: '平均延遲', b: fmtMinutes(before.averageTardinessMinutes), a: fmtMinutes(after.averageTardinessMinutes), good: after.averageTardinessMinutes <= before.averageTardinessMinutes },
+    { label: '延遲訂單', b: `${before.lateOrderCount} 張`, a: `${after.lateOrderCount} 張`, good: after.lateOrderCount <= before.lateOrderCount },
+    { label: 'Makespan', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
+  ];
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-left text-xs text-slate-400">
+          <th className="py-1">指標</th>
+          <th className="py-1">調整前</th>
+          <th className="py-1">調整後</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label}>
+            <td className="py-0.5 text-slate-500">{r.label}</td>
+            <td className="py-0.5 text-slate-400">{r.b}</td>
+            <td className={`py-0.5 font-medium ${r.good ? 'text-green-700' : 'text-red-600'}`}>{r.a}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
+  return (
+    <table className="mt-1 w-full text-xs">
+      <thead>
+        <tr className="text-left text-slate-400">
+          <th className="py-1">訂單</th>
+          <th className="py-1">完成時間變化</th>
+          <th className="py-1">延遲變化</th>
+        </tr>
+      </thead>
+      <tbody>
+        {impacts.map((i) => (
+          <tr key={i.orderId}>
+            <td className="py-0.5">
+              {i.orderNumber}
+              {i.becameLate && <Badge tone="red"> 變為逾期</Badge>}
+            </td>
+            <td className="py-0.5 text-slate-500">
+              {i.oldCompletion ? fmtDateTime(i.oldCompletion) : '—'} → {i.newCompletion ? fmtDateTime(i.newCompletion) : '未排入'}
+            </td>
+            <td className="py-0.5">
+              {i.oldTardinessMinutes} 分 → <span className={i.newTardinessMinutes > i.oldTardinessMinutes ? 'text-red-600' : 'text-green-700'}>{i.newTardinessMinutes} 分</span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
