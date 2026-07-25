@@ -322,7 +322,23 @@ export function SimulationPage() {
               </select>
             </Field>
             <Field label="故障開始時間" required>
-              <input type="datetime-local" className={inputCls} value={bdForm.startTime} onChange={(e) => setBdForm({ ...bdForm, startTime: e.target.value })} />
+              <input
+                type="datetime-local"
+                className={inputCls}
+                value={bdForm.startTime}
+                onChange={(e) => {
+                  const newStart = e.target.value;
+                  let newRepair = bdForm.estimatedRepairTime;
+                  if (newStart) {
+                    const startDate = new Date(newStart);
+                    if (!isNaN(startDate.getTime())) {
+                      const repairDate = new Date(startDate.getTime() + 4 * 60 * 60 * 1000); // 預設加 4 小時
+                      newRepair = toLocalInput(repairDate);
+                    }
+                  }
+                  setBdForm({ ...bdForm, startTime: newStart, estimatedRepairTime: newRepair });
+                }}
+              />
             </Field>
             <Field label="預估修復時間" required>
               <input type="datetime-local" className={inputCls} value={bdForm.estimatedRepairTime} onChange={(e) => setBdForm({ ...bdForm, estimatedRepairTime: e.target.value })} />
@@ -411,7 +427,7 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
     { label: '準時交貨率', b: pct(before.onTimeDeliveryRate), a: pct(after.onTimeDeliveryRate), good: after.onTimeDeliveryRate >= before.onTimeDeliveryRate },
     { label: '平均延遲', b: fmtMinutes(before.averageTardinessMinutes), a: fmtMinutes(after.averageTardinessMinutes), good: after.averageTardinessMinutes <= before.averageTardinessMinutes },
     { label: '延遲訂單', b: `${before.lateOrderCount} 張`, a: `${after.lateOrderCount} 張`, good: after.lateOrderCount <= before.lateOrderCount },
-    { label: 'Makespan', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
+    { label: '總生產工期', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
   ];
   return (
     <table className="metric-compare-table w-full text-sm">
