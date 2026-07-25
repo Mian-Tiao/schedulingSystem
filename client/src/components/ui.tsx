@@ -1,5 +1,53 @@
-/** 共用 UI 元件:按鈕、輸入欄位、對話框、狀態顯示 */
 import { type ReactNode, useEffect } from 'react';
+
+export function PageHeader({
+  eyebrow,
+  title,
+  description,
+  actions,
+}: {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        {eyebrow && <p className="page-eyebrow">{eyebrow}</p>}
+        <h1>{title}</h1>
+        {description && <p className="page-description">{description}</p>}
+      </div>
+      {actions && <div className="page-actions">{actions}</div>}
+    </header>
+  );
+}
+
+export function PageMetrics({
+  items,
+}: {
+  items: {
+    label: string;
+    value: ReactNode;
+    detail?: string;
+    tone?: 'default' | 'green' | 'amber' | 'red' | 'blue';
+  }[];
+}) {
+  return (
+    <section className="page-metrics" aria-label="頁面摘要">
+      {items.map((item) => (
+        <div className={`page-metric is-${item.tone ?? 'default'}`} key={item.label}>
+          <span className="page-metric-dot" />
+          <div>
+            <p>{item.label}</p>
+            <strong>{item.value}</strong>
+            {item.detail && <small>{item.detail}</small>}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 export function Button({
   children,
@@ -17,19 +65,13 @@ export function Button({
   title?: string;
 }) {
   const styles = {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300',
-    secondary: 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:text-slate-300',
-    danger: 'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-300',
-    ghost: 'text-slate-600 hover:bg-slate-100 disabled:text-slate-300',
+    primary: 'app-button app-button-primary',
+    secondary: 'app-button app-button-secondary',
+    danger: 'app-button app-button-danger',
+    ghost: 'app-button app-button-ghost',
   };
   return (
-    <button
-      type={type}
-      title={title}
-      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${styles[variant]}`}
-      onClick={onClick}
-      disabled={disabled}
-    >
+    <button type={type} title={title} className={styles[variant]} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   );
@@ -47,19 +89,18 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-slate-700">
+    <label className="app-field">
+      <span className="app-field-label">
         {label}
-        {required && <span className="ml-0.5 text-red-500">*</span>}
+        {required && <span className="app-required">*</span>}
       </span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
+      {hint && <span className="app-field-hint">{hint}</span>}
     </label>
   );
 }
 
-export const inputCls =
-  'w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none';
+export const inputCls = 'app-input';
 
 export function Modal({
   title,
@@ -85,24 +126,23 @@ export function Modal({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className={`max-h-[90vh] w-full overflow-y-auto rounded-lg bg-white p-5 shadow-xl ${wide ? 'max-w-3xl' : 'max-w-lg'}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
-          <button className="text-slate-400 hover:text-slate-600" onClick={onClose} aria-label="關閉">
-            ✕
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className={`modal-panel ${wide ? 'is-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="modal-eyebrow">資料設定</p>
+            <h2>{title}</h2>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="關閉">
+            ×
           </button>
         </div>
-        {children}
+        <div className="modal-content">{children}</div>
       </div>
     </div>
   );
 }
 
-/** 危險操作確認對話框 */
 export function ConfirmDialog({
   open,
   title,
@@ -118,33 +158,38 @@ export function ConfirmDialog({
 }) {
   return (
     <Modal title={title} open={open} onClose={onCancel}>
-      <p className="mb-4 text-sm text-slate-600">{message}</p>
+      <p className="mb-5 text-sm leading-6 text-slate-600">{message}</p>
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>
           取消
         </Button>
         <Button variant="danger" onClick={onConfirm}>
-          確定
+          確認刪除
         </Button>
       </div>
     </Modal>
   );
 }
 
-export function Loading({ text = '載入中…' }: { text?: string }) {
+export function Loading({ text = '資料載入中…' }: { text?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-12 text-slate-400">
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" />
-      {text}
+    <div className="app-loading">
+      <span className="app-spinner" />
+      <div>
+        <strong>{text}</strong>
+        <span>正在同步最新排程資料</span>
+      </div>
     </div>
   );
 }
 
 export function EmptyState({ text, action }: { text: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-3 py-12 text-slate-400">
-      <span className="text-3xl">📋</span>
-      <p className="text-sm">{text}</p>
+    <div className="app-empty-state">
+      <span className="empty-state-icon" aria-hidden>
+        ◌
+      </span>
+      <p>{text}</p>
       {action}
     </div>
   );
@@ -152,31 +197,40 @@ export function EmptyState({ text, action }: { text: string; action?: ReactNode 
 
 export function ErrorState({ message }: { message: string }) {
   return (
-    <div className="my-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      ⚠️ {message}
+    <div className="app-error-state">
+      <span aria-hidden>!</span>
+      <div>
+        <strong>資料載入失敗</strong>
+        <p>{message}</p>
+      </div>
     </div>
   );
 }
 
-/** 狀態徽章:顏色 + 文字(不可只靠顏色) */
-export function Badge({ tone, children }: { tone: 'green' | 'amber' | 'red' | 'slate' | 'blue'; children: ReactNode }) {
-  const tones = {
-    green: 'bg-green-100 text-green-800',
-    amber: 'bg-amber-100 text-amber-800',
-    red: 'bg-red-100 text-red-800',
-    slate: 'bg-slate-100 text-slate-600',
-    blue: 'bg-blue-100 text-blue-800',
-  };
-  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>{children}</span>;
+export function Badge({
+  tone,
+  children,
+}: {
+  tone: 'green' | 'amber' | 'red' | 'slate' | 'blue';
+  children: ReactNode;
+}) {
+  return <span className={`app-badge app-badge-${tone}`}>{children}</span>;
 }
 
-/** 訊息橫幅 */
-export function Banner({ tone, children }: { tone: 'info' | 'warn' | 'error' | 'success'; children: ReactNode }) {
-  const tones = {
-    info: 'border-blue-200 bg-blue-50 text-blue-800',
-    warn: 'border-amber-200 bg-amber-50 text-amber-800',
-    error: 'border-red-200 bg-red-50 text-red-800',
-    success: 'border-green-200 bg-green-50 text-green-800',
-  };
-  return <div className={`my-2 rounded-md border px-3 py-2 text-sm ${tones[tone]}`}>{children}</div>;
+export function Banner({
+  tone,
+  children,
+}: {
+  tone: 'info' | 'warn' | 'error' | 'success';
+  children: ReactNode;
+}) {
+  const icons = { info: 'i', warn: '!', error: '×', success: '✓' };
+  return (
+    <div className={`app-banner app-banner-${tone}`}>
+      <span className="banner-icon" aria-hidden>
+        {icons[tone]}
+      </span>
+      <div>{children}</div>
+    </div>
+  );
 }

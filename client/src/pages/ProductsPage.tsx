@@ -11,6 +11,8 @@ import {
   inputCls,
   Loading,
   Modal,
+  PageHeader,
+  PageMetrics,
 } from '../components/ui';
 import type { Product } from '../types';
 
@@ -61,18 +63,37 @@ export function ProductsPage() {
   if (isLoading) return <Loading />;
   if (error) return <ErrorState message={(error as Error).message} />;
 
+  const unsupportedCount = (products ?? []).filter(
+    (product) => !(machines ?? []).some((machine) => machine.supportedProductIds.includes(product.id)),
+  ).length;
+  const averageProcessingTime =
+    products && products.length > 0
+      ? Math.round(products.reduce((sum, product) => sum + product.defaultProcessingTime, 0) / products.length)
+      : 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">產品管理</h1>
-        <Button onClick={() => setForm({ ...emptyForm })}>+ 新增產品</Button>
-      </div>
+    <div className="products-page space-y-5">
+      <PageHeader
+        eyebrow="PRODUCT CATALOG"
+        title="產品管理"
+        description="維護產品加工時間、清洗需求與支援機台，作為排程運算的基礎資料。"
+        actions={<Button onClick={() => setForm({ ...emptyForm })}>+ 新增產品</Button>}
+      />
+
+      <PageMetrics
+        items={[
+          { label: '產品總數', value: products?.length ?? 0, detail: '已建立產品', tone: 'blue' },
+          { label: '可加工機台', value: machines?.length ?? 0, detail: '目前機台資源', tone: 'green' },
+          { label: '平均加工時間', value: `${averageProcessingTime} 分`, detail: '每單位預設值' },
+          { label: '缺少支援機台', value: unsupportedCount, detail: '需要補齊設定', tone: unsupportedCount > 0 ? 'amber' : 'default' },
+        ]}
+      />
 
       {!products || products.length === 0 ? (
         <EmptyState text="尚未建立產品。請先新增產品,才能建立訂單與設定機台。" />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+        <div className="data-table-card overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="data-table w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">產品編號</th>

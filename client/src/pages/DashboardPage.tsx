@@ -3,12 +3,29 @@ import { useDashboard } from '../api/hooks';
 import { Badge, EmptyState, ErrorState, Loading } from '../components/ui';
 import { fmtDateTime, fmtMinutes } from '../utils/time';
 
-function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: 'red' | 'amber' }) {
-  const color = tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-slate-800';
+function MetricItem({
+  label,
+  value,
+  detail,
+  tone = 'default',
+  symbol,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  tone?: 'default' | 'amber' | 'red';
+  symbol: string;
+}) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p>
+    <div className={`metric-item is-${tone}`}>
+      <div className="metric-symbol" aria-hidden>
+        {symbol}
+      </div>
+      <div>
+        <p className="metric-label">{label}</p>
+        <p className="metric-value">{value}</p>
+        <p className="metric-detail">{detail}</p>
+      </div>
     </div>
   );
 }
@@ -21,97 +38,217 @@ export function DashboardPage() {
   if (!data) return null;
 
   const maxLoad = Math.max(1, ...data.machineLoad.map((m) => m.productionMinutes + m.changeoverMinutes));
+  const riskCount = data.riskOrders.length;
+  const recommendation = data.latestRecommendation;
+  const totalMachines = data.availableMachineCount + data.maintenanceMachineCount + data.disabledMachineCount;
+  const availabilityRate = totalMachines === 0 ? 0 : Math.round((data.availableMachineCount / totalMachines) * 100);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-bold text-slate-800">總覽</h1>
+    <div className="dashboard-page">
+      <header className="dashboard-titlebar">
+        <div>
+          <p className="dashboard-kicker">
+            <span />
+            LIVE OPERATIONS
+          </p>
+          <h1>今日生產中控</h1>
+          <p>把訂單、產能與交期風險放在同一個畫面，直接看現在該處理什麼。</p>
+        </div>
+        <div className="dashboard-title-actions">
+          <span className="live-chip">
+            <i />
+            資料即時同步
+          </span>
+          <Link to="/schedule" className="command-button">
+            開始新排程
+            <span aria-hidden>→</span>
+          </Link>
+        </div>
+      </header>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-        <StatCard label="待排程訂單" value={data.pendingOrderCount} />
-        <StatCard label="今日到期訂單" value={data.dueTodayOrders.length} tone={data.dueTodayOrders.length > 0 ? 'amber' : undefined} />
-        <StatCard label="延遲風險訂單(48小時內到期)" value={data.riskOrders.length} tone={data.riskOrders.length > 0 ? 'red' : undefined} />
-        <StatCard label="可用機台" value={data.availableMachineCount} />
-        <StatCard label="維護中機台" value={data.maintenanceMachineCount} tone={data.maintenanceMachineCount > 0 ? 'amber' : undefined} />
-      </div>
+      <section className={`shift-brief ${riskCount > 0 ? 'has-risk' : ''}`}>
+        <div className="shift-brief-copy">
+          <p className="brief-label">SHIFT BRIEFING / 班次摘要</p>
+          <h2>{riskCount > 0 ? `${riskCount} 張訂單進入交期警戒` : '目前生產節奏穩定'}</h2>
+          <p>
+            {riskCount > 0
+              ? `未來 48 小時內有訂單需要優先確認；目前 ${data.availableMachineCount} 台機台可投入生產。`
+              : `未來 48 小時沒有高風險訂單，目前 ${data.availableMachineCount} 台機台可投入生產。`}
+          </p>
+          <div className="brief-actions">
+            <Link to={riskCount > 0 ? '/orders' : '/gantt'}>
+              {riskCount > 0 ? '查看風險訂單' : '查看目前排程'}
+              <span aria-hidden>↗</span>
+            </Link>
+            {recommendation && (
+              <span>
+                最新方案 {recommendation.algorithm} · {fmtDateTime(recommendation.generatedAt)}
+              </span>
+            )}
+          </div>
+        </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">最新推薦方案</h2>
-          {data.latestRecommendation ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge tone="blue">{data.latestRecommendation.algorithm}</Badge>
-                <span className="text-sm text-slate-600">分數 {data.latestRecommendation.score}</span>
-                <span className="text-xs text-slate-400">{fmtDateTime(data.latestRecommendation.generatedAt)} 產生</span>
+        <div className="shift-scoreboard">
+          <div className="score-ring" style={{ '--score': `${recommendation?.score ?? availabilityRate}%` } as React.CSSProperties}>
+            <div>
+              <strong>{recommendation?.score ?? availabilityRate}</strong>
+              <span>{recommendation ? '方案評分' : '機台可用率'}</span>
+            </div>
+          </div>
+          <div className="score-status">
+            <span className={riskCount > 0 ? 'is-alert' : 'is-good'} />
+            <div>
+              <small>系統判定</small>
+              <strong>{riskCount > 0 ? '需要關注' : '運行穩定'}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="metric-strip" aria-label="營運關鍵指標">
+        <MetricItem label="待排程訂單" value={data.pendingOrderCount} detail="等待進入排程" symbol="01" />
+        <MetricItem
+          label="今日到期"
+          value={data.dueTodayOrders.length}
+          detail="今天需要完成"
+          tone={data.dueTodayOrders.length > 0 ? 'amber' : 'default'}
+          symbol="02"
+        />
+        <MetricItem
+          label="交期風險"
+          value={riskCount}
+          detail="未來 48 小時"
+          tone={riskCount > 0 ? 'red' : 'default'}
+          symbol="03"
+        />
+        <MetricItem label="可用機台" value={data.availableMachineCount} detail={`共 ${totalMachines} 台機台`} symbol="04" />
+        <MetricItem
+          label="維護中"
+          value={data.maintenanceMachineCount}
+          detail="暫不可排產"
+          tone={data.maintenanceMachineCount > 0 ? 'amber' : 'default'}
+          symbol="05"
+        />
+      </section>
+
+      <div className="dashboard-grid">
+        <section className="control-panel recommendation-card">
+          <PanelTitle index="01" eyebrow="RECOMMENDATION" title="排程建議" link="/schedule" linkLabel="比較所有方案" />
+          {recommendation ? (
+            <div className="recommendation-body">
+              <div className="algorithm-block">
+                <span>最佳演算法</span>
+                <strong>{recommendation.algorithm}</strong>
+                <Badge tone="green">系統推薦</Badge>
               </div>
-              <p className="text-sm text-slate-600">{data.latestRecommendation.recommendationReason}</p>
-              <Link to={`/gantt/${data.latestRecommendation.scenarioId}`} className="text-sm text-blue-600 hover:underline">
-                查看甘特圖 →
-              </Link>
+              <div className="recommendation-copy">
+                <p>{recommendation.recommendationReason}</p>
+                <Link to={`/gantt/${recommendation.scenarioId}`} className="inline-command-link">
+                  開啟甘特圖 <span aria-hidden>→</span>
+                </Link>
+              </div>
             </div>
           ) : (
             <EmptyState
               text="尚未執行排程"
               action={
-                <Link to="/schedule" className="text-sm text-blue-600 hover:underline">
-                  前往排程中心
+                <Link to="/schedule" className="inline-command-link">
+                  建立第一個排程方案 →
                 </Link>
               }
             />
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">機台負載概況(排名第一方案)</h2>
+        <section className="control-panel machine-load-card">
+          <PanelTitle index="02" eyebrow="CAPACITY" title="機台負載" link="/machines" linkLabel="管理機台" />
           {data.machineLoad.length === 0 ? (
             <EmptyState text="尚未建立機台" />
           ) : (
-            <div className="space-y-2">
-              {data.machineLoad.map((m) => {
-                const total = m.productionMinutes + m.changeoverMinutes;
+            <div className="machine-load-list">
+              {data.machineLoad.map((machine) => {
+                const total = machine.productionMinutes + machine.changeoverMinutes;
+                const width = Math.max(4, (total / maxLoad) * 100);
+                const setupWidth = total ? (machine.changeoverMinutes / total) * 100 : 0;
                 return (
-                  <div key={m.machineId}>
-                    <div className="mb-0.5 flex items-center justify-between text-xs">
-                      <span className="font-medium text-slate-700">
-                        {m.machineCode} {m.machineName}
-                        {m.status === 'maintenance' && <Badge tone="amber"> 維護中</Badge>}
-                        {m.status === 'disabled' && <Badge tone="slate"> 停用</Badge>}
-                      </span>
-                      <span className="text-slate-500">
-                        生產 {fmtMinutes(m.productionMinutes)}・換模清洗 {fmtMinutes(m.changeoverMinutes)}
-                      </span>
-                    </div>
-                    <div className="h-2.5 w-full overflow-hidden rounded bg-slate-100">
-                      <div className="flex h-full" style={{ width: `${(total / maxLoad) * 100}%` }}>
-                        <div className="bg-production" style={{ width: `${total ? (m.productionMinutes / total) * 100 : 0}%` }} />
-                        <div className="bg-setup" style={{ width: `${total ? (m.changeoverMinutes / total) * 100 : 0}%` }} />
+                  <div className="machine-load-row" key={machine.machineId}>
+                    <div className="machine-identity">
+                      <span className={`machine-state is-${machine.status}`} />
+                      <div>
+                        <strong>{machine.machineCode}</strong>
+                        <small>{machine.machineName}</small>
                       </div>
                     </div>
+                    <div className="machine-bar-area">
+                      <div className="machine-duration">
+                        <span>生產 {fmtMinutes(machine.productionMinutes)}</span>
+                        <span>換模清洗 {fmtMinutes(machine.changeoverMinutes)}</span>
+                      </div>
+                      <div className="machine-track">
+                        <div className="machine-fill" style={{ width: `${width}%` }}>
+                          <span className="machine-setup" style={{ width: `${setupWidth}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                    <strong className="machine-total">{fmtMinutes(total)}</strong>
                   </div>
                 );
               })}
+              <div className="machine-legend">
+                <span><i className="production-key" />生產</span>
+                <span><i className="setup-key" />換模／清洗</span>
+              </div>
             </div>
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">今日到期訂單</h2>
+        <section className="control-panel due-card">
+          <PanelTitle index="03" eyebrow="DUE TODAY" title="今日交付" link="/orders" linkLabel="全部訂單" />
           {data.dueTodayOrders.length === 0 ? (
-            <p className="text-sm text-slate-400">今天沒有到期的訂單。</p>
+            <EmptyState text="今天沒有到期訂單，可以專注處理後續排程。" />
           ) : (
             <OrderList orders={data.dueTodayOrders} />
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">延遲風險訂單(48 小時內到期)</h2>
-          {data.riskOrders.length === 0 ? (
-            <p className="text-sm text-slate-400">目前沒有高風險訂單。</p>
+        <section className="control-panel risk-card">
+          <PanelTitle index="04" eyebrow="RISK WATCH" title="交期警戒" link="/orders" linkLabel="檢視風險" risk />
+          {riskCount === 0 ? (
+            <EmptyState text="目前沒有 48 小時內到期的高風險訂單。" />
           ) : (
             <OrderList orders={data.riskOrders} risk />
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function PanelTitle({
+  index,
+  eyebrow,
+  title,
+  link,
+  linkLabel,
+  risk,
+}: {
+  index: string;
+  eyebrow: string;
+  title: string;
+  link: string;
+  linkLabel: string;
+  risk?: boolean;
+}) {
+  return (
+    <div className="control-panel-heading">
+      <div className={`panel-number ${risk ? 'is-risk' : ''}`}>{index}</div>
+      <div>
+        <span>{eyebrow}</span>
+        <h2>{title}</h2>
+      </div>
+      <Link to={link}>
+        {linkLabel} <span aria-hidden>↗</span>
+      </Link>
     </div>
   );
 }
@@ -124,15 +261,21 @@ function OrderList({
   risk?: boolean;
 }) {
   return (
-    <ul className="divide-y divide-slate-100">
-      {orders.map((o) => (
-        <li key={o.id} className="flex items-center justify-between py-2 text-sm">
-          <div>
-            <span className="font-medium text-slate-700">{o.orderNumber}</span>
-            <span className="ml-2 text-slate-500">{o.productName}</span>
-            {o.priority <= 2 && <Badge tone="red"> 高優先</Badge>}
+    <ul className="order-watch-list">
+      {orders.map((order) => (
+        <li key={order.id}>
+          <div className="order-mark">
+            <span>{order.orderNumber.slice(-2)}</span>
           </div>
-          <span className={risk ? 'text-red-600' : 'text-slate-500'}>交期 {fmtDateTime(o.dueDate)}</span>
+          <div className="order-info">
+            <strong>{order.orderNumber}</strong>
+            <span>{order.productName}</span>
+          </div>
+          {order.priority <= 2 && <Badge tone="red">高優先</Badge>}
+          <div className={`order-due ${risk ? 'is-risk' : ''}`}>
+            <small>交期</small>
+            <strong>{fmtDateTime(order.dueDate)}</strong>
+          </div>
         </li>
       ))}
     </ul>

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, apiPost } from '../api/client';
 import { useAiStatus, useScenarios } from '../api/hooks';
-import { Badge, Banner, Button, EmptyState, Loading } from '../components/ui';
+import { Badge, Banner, Button, Loading, PageHeader } from '../components/ui';
 
 const QUICK_QUESTIONS = [
   '為什麼這個方案排名第一?',
@@ -72,89 +72,123 @@ export function AiPage() {
   const hasSchedule = (scenarios ?? []).length > 0;
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] flex-col space-y-3">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-bold text-slate-800">AI 決策諮詢</h1>
-        {status?.enabled ? <Badge tone="green">✓ 已啟用</Badge> : <Badge tone="slate">未啟用</Badge>}
-      </div>
+    <div className="ai-page">
+      <PageHeader
+        eyebrow="DECISION COPILOT"
+        title="AI 決策諮詢"
+        description="用自然語言理解排程績效、延遲原因與機台瓶頸，快速形成可執行的判斷。"
+        actions={status?.enabled ? <Badge tone="green">✓ 已啟用</Badge> : <Badge tone="slate">未啟用</Badge>}
+      />
 
-      {!status?.enabled && (
-        <Banner tone="warn">
-          AI 功能未啟用:請在 server/.env 設定 ANTHROPIC_API_KEY 後重新啟動伺服器。排程、甘特圖等核心功能不受影響,可正常使用。
-        </Banner>
-      )}
-      {status?.enabled && !hasSchedule && (
-        <Banner tone="info">目前沒有排程結果。請先到「排程中心」執行排程,AI 才有數據可以分析。</Banner>
-      )}
-      <Banner tone="info">
-        AI 只會根據系統的真實排程數據(績效指標、延遲訂單、機台負載)解釋與建議,不會直接修改排程;建議經你確認後才需自行套用。
-      </Banner>
+      <div className="ai-workspace">
+        <aside className="ai-context-panel">
+          <div className="ai-status-block">
+            <span className={`ai-orb ${status?.enabled ? 'is-online' : ''}`}>✦</span>
+            <div>
+              <small>DECISION COPILOT</small>
+              <h2>{status?.enabled ? 'AI 已準備完成' : 'AI 尚未啟用'}</h2>
+              <p>{hasSchedule ? `目前有 ${scenarios?.length ?? 0} 個排程方案可供分析。` : '執行排程後即可開始分析。'}</p>
+            </div>
+          </div>
 
-      {/* 對話區 */}
-      <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
-        {messages.length === 0 ? (
-          <EmptyState text="從下方快速問題開始,或輸入你想了解的排程問題。" />
-        ) : (
-          <div className="space-y-3">
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-[75%] whitespace-pre-wrap rounded-lg px-3.5 py-2 text-sm leading-6 ${
-                    m.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : m.role === 'error'
-                        ? 'border border-red-200 bg-red-50 text-red-700'
-                        : 'border border-slate-200 bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  {m.text}
-                </div>
-              </div>
+          {!status?.enabled && (
+            <Banner tone="warn">
+              請在 server/.env 設定 ANTHROPIC_API_KEY 後重新啟動伺服器。其他排程功能不受影響。
+            </Banner>
+          )}
+          {status?.enabled && !hasSchedule && (
+            <Banner tone="info">目前沒有排程結果，請先到排程中心執行排程。</Banner>
+          )}
+
+          <div className="ai-context-note">
+            <span aria-hidden>i</span>
+            <p>AI 只解讀真實排程數據，不會直接修改任何訂單或時間軸。</p>
+          </div>
+
+          <div className="quick-question-list">
+            <div className="quick-question-heading">
+              <span>QUICK START</span>
+              <h3>常用分析問題</h3>
+            </div>
+            <button onClick={analyze} disabled={busy || !status?.enabled || !hasSchedule}>
+              <span>00</span>
+              分析目前排程結果
+            </button>
+            {QUICK_QUESTIONS.map((question, index) => (
+              <button key={question} onClick={() => ask(question)} disabled={busy || !status?.enabled || !hasSchedule}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                {question}
+              </button>
             ))}
-            {busy && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-400">
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" />
-                  AI 分析中…
-                </div>
+          </div>
+        </aside>
+
+        <section className="ai-chat-panel">
+          <header className="ai-chat-header">
+            <div>
+              <span className="ai-header-mark">AI</span>
+              <div>
+                <h2>排程分析對話</h2>
+                <p>{status?.enabled ? '回答會引用目前系統中的排程資料' : '等待 AI 服務啟用'}</p>
+              </div>
+            </div>
+            <span className={`ai-connection ${status?.enabled ? 'is-online' : ''}`}>
+              <i />
+              {status?.enabled ? 'ONLINE' : 'OFFLINE'}
+            </span>
+          </header>
+
+          <div className="ai-message-area">
+            {messages.length === 0 ? (
+              <div className="ai-empty-conversation">
+                <span aria-hidden>✦</span>
+                <h3>從一個營運問題開始</h3>
+                <p>你可以詢問逾期原因、機台瓶頸，或如何調整特定訂單。</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((message, index) => (
+                  <div key={index} className={`ai-message-row is-${message.role}`}>
+                    {message.role !== 'user' && <span className="message-avatar">{message.role === 'error' ? '!' : 'AI'}</span>}
+                    <div className="ai-message-bubble">{message.text}</div>
+                  </div>
+                ))}
+                {busy && (
+                  <div className="ai-message-row is-ai">
+                    <span className="message-avatar">AI</span>
+                    <div className="ai-message-bubble is-thinking">
+                      <span className="app-spinner" />
+                      正在分析排程資料…
+                    </div>
+                  </div>
+                )}
+                <div ref={bottomRef} />
               </div>
             )}
-            <div ref={bottomRef} />
           </div>
-        )}
-      </div>
 
-      {/* 快速問題 */}
-      <div className="flex flex-wrap gap-1.5">
-        <Button variant="secondary" onClick={analyze} disabled={busy || !status?.enabled || !hasSchedule}>
-          📊 分析目前排程結果
-        </Button>
-        {QUICK_QUESTIONS.map((q) => (
-          <Button key={q} variant="secondary" onClick={() => ask(q)} disabled={busy || !status?.enabled || !hasSchedule}>
-            {q}
-          </Button>
-        ))}
+          <form
+            className="ai-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void ask(input);
+            }}
+          >
+            <div>
+              <span aria-hidden>›</span>
+              <input
+                placeholder={status?.enabled ? '輸入你的排程問題…' : 'AI 功能未啟用'}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={!status?.enabled || busy}
+              />
+            </div>
+            <Button type="submit" disabled={!status?.enabled || busy || !input.trim()}>
+              傳送 <span aria-hidden>→</span>
+            </Button>
+          </form>
+        </section>
       </div>
-
-      {/* 輸入列 */}
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void ask(input);
-        }}
-      >
-        <input
-          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-          placeholder={status?.enabled ? '輸入問題,例如:若要讓訂單 PO-006 準時完成,可以怎麼調整?' : 'AI 功能未啟用'}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={!status?.enabled || busy}
-        />
-        <Button type="submit" disabled={!status?.enabled || busy || !input.trim()}>
-          送出
-        </Button>
-      </form>
     </div>
   );
 }

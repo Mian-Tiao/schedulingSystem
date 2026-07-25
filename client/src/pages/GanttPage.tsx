@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useMachines, useOrders, useProducts, useScenarioDetail, useScenarios, useScheduleMutations } from '../api/hooks';
-import { Badge, Banner, Button, EmptyState, ErrorState, Loading, Modal } from '../components/ui';
+import { Badge, Banner, Button, EmptyState, ErrorState, Loading, Modal, PageHeader, PageMetrics } from '../components/ui';
 import { useGanttStore, type AdjustmentRecord } from '../stores/ganttStore';
 import type { Machine, Metrics, Task } from '../types';
 import { TASK_TYPE_LABELS } from '../types';
@@ -99,7 +99,11 @@ export function GanttPage() {
   if (!scenarioId)
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-bold text-slate-800">甘特圖排程</h1>
+        <PageHeader
+          eyebrow="SCHEDULE TIMELINE"
+          title="甘特圖排程"
+          description="以機台時間軸檢視生產任務，並透過拖曳調整工作開始時間與指派機台。"
+        />
         <EmptyState text="尚未產生排程方案,請先到排程中心執行排程。" />
       </div>
     );
@@ -253,14 +257,19 @@ export function GanttPage() {
   const dragTask = drag?.task ?? null;
   const dragRow = dragTask ? Math.min(machineRows.length - 1, Math.max(0, (rowIndex.get(dragTask.machineId) ?? 0) + (drag?.rowDelta ?? 0))) : 0;
   const dragNewStart = dragTask ? Date.parse(dragTask.startTime) + (drag?.deltaMin ?? 0) * 60_000 : 0;
+  const productionTaskCount = tasks.filter((task) => task.taskType === 'production').length;
+  const supportTaskCount = tasks.length - productionTaskCount;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-slate-800">甘特圖排程</h1>
+    <div className="gantt-page space-y-5">
+      <PageHeader
+        eyebrow="SCHEDULE TIMELINE"
+        title="甘特圖排程"
+        description="拖曳生產區塊即可調整時間或機台，系統會即時驗證限制並重新計算績效。"
+        actions={
+          <>
           <select
-            className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+            className="app-input !w-auto min-w-44"
             value={scenario.scenarioId}
             onChange={(e) => navigate(`/gantt/${e.target.value}`)}
           >
@@ -271,8 +280,19 @@ export function GanttPage() {
             ))}
           </select>
           {scenario.isManuallyAdjusted && <Badge tone="blue">已人工調整</Badge>}
-        </div>
-        <div className="flex items-center gap-1.5">
+          </>
+        }
+      />
+      <PageMetrics
+        items={[
+          { label: '生產任務', value: productionTaskCount, detail: '目前方案工作數', tone: 'blue' },
+          { label: '換模／清洗', value: supportTaskCount, detail: '支援作業', tone: supportTaskCount > 0 ? 'amber' : 'default' },
+          { label: '排程機台', value: machineRows.length, detail: '時間軸列數', tone: 'green' },
+          { label: '準時交貨率', value: pct(scenario.metrics.onTimeDeliveryRate), detail: `${scenario.metrics.lateOrderCount} 張延遲`, tone: scenario.metrics.lateOrderCount > 0 ? 'red' : 'green' },
+        ]}
+      />
+      <div className="gantt-toolbar">
+        <div className="flex flex-wrap items-center gap-1.5">
           {SCALES.map((s, i) => (
             <Button key={s.id} variant={i === scaleIdx ? 'primary' : 'secondary'} onClick={() => setScaleIdx(i)}>
               {s.label}
@@ -297,7 +317,7 @@ export function GanttPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+      <div className="gantt-legend flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-production" /> 生產</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-setup" /> 換模</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-cleaning" /> 清洗</span>
@@ -310,7 +330,7 @@ export function GanttPage() {
       {busy && <Banner tone="info">處理中,請稍候…</Banner>}
 
       {/* 甘特圖主體 */}
-      <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="gantt-canvas rounded-lg border border-slate-200 bg-white">
         <div className="overflow-x-auto" ref={containerRef}>
           <div style={{ width: LABEL_W + chartW, minWidth: '100%' }}>
             {/* 時間刻度列 */}

@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { ApiError, apiPost } from '../api/client';
 import { useMachines, useProducts, useScenarios } from '../api/hooks';
-import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading } from '../components/ui';
+import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading, PageHeader, PageMetrics } from '../components/ui';
 import type { Metrics, OrderImpact } from '../types';
 import { fmtDateTime, fmtMinutes, fromLocalInput, pct, toLocalInput } from '../utils/time';
 
@@ -75,7 +75,11 @@ export function SimulationPage() {
   if (!top)
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-bold text-slate-800">情境模擬</h1>
+        <PageHeader
+          eyebrow="WHAT-IF ANALYSIS"
+          title="情境模擬"
+          description="在不影響正式排程的前提下，預演急單與機台故障可能造成的衝擊。"
+        />
         <EmptyState text="請先到排程中心執行排程,再進行情境模擬。" />
       </div>
     );
@@ -124,24 +128,43 @@ export function SimulationPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-bold text-slate-800">情境模擬</h1>
+    <div className="simulation-page space-y-5">
+      <PageHeader
+        eyebrow="WHAT-IF ANALYSIS"
+        title="情境模擬"
+        description="以目前最佳方案為基準，預演突發事件並比較不同應變策略。"
+      />
+      <PageMetrics
+        items={[
+          { label: '模擬基準', value: top.algorithm, detail: '目前排名第一方案', tone: 'blue' },
+          { label: '準時交貨率', value: pct(top.metrics.onTimeDeliveryRate), detail: '正式排程基準', tone: 'green' },
+          { label: '延遲訂單', value: `${top.metrics.lateOrderCount} 張`, detail: '模擬前狀態', tone: top.metrics.lateOrderCount > 0 ? 'red' : 'default' },
+          { label: '機台利用率', value: pct(top.metrics.machineUtilizationRate), detail: '純生產時間占比' },
+        ]}
+      />
       <Banner tone="info">
         模擬以目前排名第一的方案({top.algorithm})為基準,結果不會寫入正式排程。
       </Banner>
 
-      <div className="flex gap-2">
+      <div className="simulation-tabs">
         <Button variant={tab === 'urgent' ? 'primary' : 'secondary'} onClick={() => setTab('urgent')}>
-          🚨 急單插入
+          <span aria-hidden>01</span> 急單插入
         </Button>
         <Button variant={tab === 'breakdown' ? 'primary' : 'secondary'} onClick={() => setTab('breakdown')}>
-          🔧 機台故障
+          <span aria-hidden>02</span> 機台故障
         </Button>
       </div>
 
       {tab === 'urgent' && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">急單資料</h2>
+        <section className="simulation-workbench">
+          <div className="section-command-heading">
+            <span>01</span>
+            <div>
+              <p>URGENT ORDER</p>
+              <h2>設定急單條件</h2>
+              <small>比較直接插入與全體重排兩種策略對現有訂單的衝擊。</small>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Field label="急單編號" required>
               <input className={inputCls} value={urgentForm.orderNumber} onChange={(e) => setUrgentForm({ ...urgentForm, orderNumber: e.target.value })} />
@@ -182,8 +205,8 @@ export function SimulationPage() {
           {urgentError && <ErrorState message={urgentError} />}
 
           {urgentResult && (
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-md border border-slate-200 p-3">
+            <div className="simulation-result-grid mt-5 grid gap-4 lg:grid-cols-2">
+              <div className="scenario-result">
                 <h3 className="mb-2 text-sm font-semibold text-slate-700">策略一:插入目前排程(既有訂單不動)</h3>
                 {urgentResult.insert.ok ? (
                   <>
@@ -202,7 +225,7 @@ export function SimulationPage() {
                   <Banner tone="error">{urgentResult.insert.reason}</Banner>
                 )}
               </div>
-              <div className="rounded-md border border-slate-200 p-3">
+              <div className="scenario-result">
                 <h3 className="mb-2 text-sm font-semibold text-slate-700">策略二:重新計算全部排程(含急單)</h3>
                 <MetricsCompare before={urgentResult.baseline.metrics} after={urgentResult.rebuild.metrics} />
                 <p className="mt-2 text-sm">
@@ -228,8 +251,15 @@ export function SimulationPage() {
       )}
 
       {tab === 'breakdown' && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">故障資訊</h2>
+        <section className="simulation-workbench">
+          <div className="section-command-heading">
+            <span>02</span>
+            <div>
+              <p>MACHINE BREAKDOWN</p>
+              <h2>設定故障條件</h2>
+              <small>評估修復時間、延遲訂單與可轉移機台，提前準備應變方案。</small>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Field label="故障機台" required>
               <select className={inputCls} value={bdForm.machineId} onChange={(e) => setBdForm({ ...bdForm, machineId: e.target.value })}>
@@ -256,7 +286,7 @@ export function SimulationPage() {
 
           {bdResult && (
             <div className="mt-4 space-y-4">
-              <div className="rounded-md border border-slate-200 p-3">
+              <div className="scenario-result">
                 <h3 className="mb-2 text-sm font-semibold text-slate-700">
                   情境一:按預估修復時間({fmtDateTime(bdResult.breakdown.estimatedRepairTime)} 修復)
                 </h3>
@@ -278,7 +308,7 @@ export function SimulationPage() {
                 )}
               </div>
 
-              <div className="rounded-md border border-slate-200 p-3">
+              <div className="scenario-result">
                 <h3 className="mb-2 text-sm font-semibold text-slate-700">情境二:反向分析 — 最晚何時要修好?</h3>
                 <Banner tone={bdResult.reverseAnalysis.latestSafeRepairTime ? 'info' : 'warn'}>
                   {bdResult.reverseAnalysis.latestSafeRepairTime
@@ -288,7 +318,7 @@ export function SimulationPage() {
               </div>
 
               {bdResult.withEstimatedRepair.lateOrders.length > 0 && (
-                <div className="rounded-md border border-slate-200 p-3">
+                <div className="scenario-result is-recommendation">
                   <h3 className="mb-2 text-sm font-semibold text-slate-700">建議</h3>
                   <ul className="space-y-1 text-sm text-slate-600">
                     <li>・最少會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
@@ -323,7 +353,7 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
     { label: 'Makespan', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
   ];
   return (
-    <table className="w-full text-sm">
+    <table className="metric-compare-table w-full text-sm">
       <thead>
         <tr className="text-left text-xs text-slate-400">
           <th className="py-1">指標</th>
@@ -346,7 +376,7 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
 
 function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
   return (
-    <table className="mt-1 w-full text-xs">
+    <table className="impact-table mt-1 w-full text-xs">
       <thead>
         <tr className="text-left text-slate-400">
           <th className="py-1">訂單</th>

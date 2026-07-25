@@ -12,6 +12,8 @@ import {
   inputCls,
   Loading,
   Modal,
+  PageHeader,
+  PageMetrics,
 } from '../components/ui';
 import type { Order } from '../types';
 import { PRIORITY_LABELS } from '../types';
@@ -104,12 +106,18 @@ export function OrdersPage() {
 
   const product = form ? productById.get(form.productId) : null;
   const estimated = form && product && !form.processingTime ? Number(form.quantity || 0) * product.defaultProcessingTime : null;
+  const pendingCount = (orders ?? []).filter((o) => o.status === 'pending').length;
+  const activeCount = (orders ?? []).filter((o) => o.status === 'scheduled' || o.status === 'inProgress').length;
+  const priorityCount = (orders ?? []).filter((o) => o.priority <= 2).length;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">訂單管理</h1>
-        <div className="flex gap-2">
+    <div className="orders-page space-y-5">
+      <PageHeader
+        eyebrow="ORDER PIPELINE"
+        title="訂單管理"
+        description="集中管理交期、優先級與可用機台，讓每張工單都有清楚的排程條件。"
+        actions={
+          <>
           <Button variant="secondary" onClick={() => { setCsvOpen(true); setCsvResult(null); }}>
             匯入 CSV
           </Button>
@@ -120,10 +128,24 @@ export function OrdersPage() {
           >
             + 新增訂單
           </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-3">
+      <PageMetrics
+        items={[
+          { label: '目前訂單', value: orders?.length ?? 0, detail: '系統內全部工單', tone: 'blue' },
+          { label: '等待排程', value: pendingCount, detail: '尚未指派時段', tone: pendingCount > 0 ? 'amber' : 'default' },
+          { label: '排程執行中', value: activeCount, detail: '已排程或生產中', tone: 'green' },
+          { label: '高優先訂單', value: priorityCount, detail: '優先級 1–2', tone: priorityCount > 0 ? 'red' : 'default' },
+        ]}
+      />
+
+      <div className="data-toolbar">
+        <div className="toolbar-label">
+          <span>FILTER</span>
+          <strong>篩選與排序</strong>
+        </div>
         <input
           className={`${inputCls} !w-48`}
           placeholder="搜尋訂單編號或備註"
@@ -159,13 +181,14 @@ export function OrdersPage() {
           <option value="orderNumber">依訂單編號排序</option>
           <option value="priority">依優先級排序</option>
         </select>
+        <span className="toolbar-result">{sorted.length} 筆結果</span>
       </div>
 
       {sorted.length === 0 ? (
         <EmptyState text="沒有符合條件的訂單。" />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+        <div className="data-table-card overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="data-table w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
                 <th className="px-3 py-2.5">訂單編號</th>

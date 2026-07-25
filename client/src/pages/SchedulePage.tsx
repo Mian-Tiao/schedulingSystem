@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useScenarios, useScheduleMutations } from '../api/hooks';
-import { Badge, Banner, Button, EmptyState, ErrorState, Loading } from '../components/ui';
+import { Badge, Banner, Button, EmptyState, ErrorState, Loading, PageHeader, PageMetrics } from '../components/ui';
 import type { Metrics, ObjectiveId, ScenarioSummary } from '../types';
 import { OBJECTIVE_LABELS } from '../types';
 import { fmtDateTime, fmtMinutes, pct } from '../utils/time';
@@ -49,18 +49,39 @@ export function SchedulePage() {
 
   const list = scenarios ?? [];
   const top3 = list.filter((s) => s.rank <= 3);
+  const best = list.find((s) => s.rank === 1);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-bold text-slate-800">排程中心</h1>
+    <div className="schedule-page space-y-6">
+      <PageHeader
+        eyebrow="SCHEDULING ENGINE"
+        title="排程中心"
+        description="依照交期、流程時間與機台效率比較多種演算法，找出最符合現場目標的方案。"
+      />
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">1. 選擇排程目標,執行排程</h2>
-        <div className="flex flex-wrap items-end gap-3">
+      <PageMetrics
+        items={[
+          { label: '現有方案', value: list.length, detail: '可供比較的演算法結果', tone: 'blue' },
+          { label: '最佳方案', value: best?.algorithm ?? '—', detail: best ? `系統評分 ${best.score}` : '尚未執行排程', tone: 'green' },
+          { label: '準時交貨率', value: best ? pct(best.metrics.onTimeDeliveryRate) : '—', detail: '排名第一方案' },
+          { label: '延遲訂單', value: best ? `${best.metrics.lateOrderCount} 張` : '—', detail: '排名第一方案', tone: best && best.metrics.lateOrderCount > 0 ? 'red' : 'default' },
+        ]}
+      />
+
+      <section className="schedule-launch-card">
+        <div className="section-command-heading">
+          <span>01</span>
+          <div>
+            <p>SCHEDULE RUN</p>
+            <h2>建立新排程</h2>
+            <small>選擇這次最重要的營運目標，系統會同時計算四種演算法。</small>
+          </div>
+        </div>
+        <div className="schedule-launch-controls">
           <label className="block">
-            <span className="mb-1 block text-sm text-slate-600">本次排程最重要的目標是?</span>
+            <span className="mb-2 block text-xs font-semibold text-slate-600">本次排程最重要的目標</span>
             <select
-              className="w-64 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+              className="app-input !w-72"
               value={objective}
               onChange={(e) => setObjective(e.target.value as ObjectiveId)}
             >
@@ -94,9 +115,13 @@ export function SchedulePage() {
       ) : (
         <>
           <section>
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">
-              2. 推薦方案(目標:{OBJECTIVE_LABELS[list[0]!.objective]},{fmtDateTime(list[0]!.generatedAt)} 產生)
-            </h2>
+            <div className="section-row-heading">
+              <div>
+                <span>02 / RECOMMENDATION</span>
+                <h2>推薦方案</h2>
+              </div>
+              <p>目標：{OBJECTIVE_LABELS[list[0]!.objective]} · {fmtDateTime(list[0]!.generatedAt)} 產生</p>
+            </div>
             <div className="grid gap-4 md:grid-cols-3">
               {top3.map((s) => (
                 <RecommendCard key={s.scenarioId} s={s} />
@@ -104,10 +129,16 @@ export function SchedulePage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">3. 方案績效比較</h2>
+          <section className="data-table-card rounded-lg border border-slate-200 bg-white p-4">
+            <div className="section-row-heading compact">
+              <div>
+                <span>03 / PERFORMANCE</span>
+                <h2>方案績效比較</h2>
+              </div>
+              <p>綠色數值代表該指標的最佳結果</p>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="data-table w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-slate-500">
                     <th className="py-2 pr-4">指標</th>
@@ -179,16 +210,24 @@ export function SchedulePage() {
 function RecommendCard({ s }: { s: ScenarioSummary }) {
   const medal = s.rank === 1 ? '🥇 推薦第一名' : s.rank === 2 ? '🥈 推薦第二名' : '🥉 推薦第三名';
   return (
-    <div className={`rounded-lg border bg-white p-4 ${s.rank === 1 ? 'border-blue-300 ring-1 ring-blue-200' : 'border-slate-200'}`}>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-700">{medal}</span>
+    <article className={`scenario-card ${s.rank === 1 ? 'is-winner' : ''}`}>
+      <div className="scenario-card-top">
+        <span>{medal}</span>
         <Badge tone={s.rank === 1 ? 'blue' : 'slate'}>{s.algorithm}</Badge>
       </div>
-      <p className="mb-1 text-2xl font-bold text-slate-800">{s.score} 分</p>
-      <p className="mb-3 text-xs leading-5 text-slate-500">{s.recommendationReason}</p>
-      <Link to={`/gantt/${s.scenarioId}`} className="text-sm text-blue-600 hover:underline">
-        查看甘特圖 →
+      <div className="scenario-score">
+        <strong>{s.score}</strong>
+        <span>系統評分</span>
+      </div>
+      <div className="scenario-mini-metrics">
+        <span><small>準交率</small>{pct(s.metrics.onTimeDeliveryRate)}</span>
+        <span><small>延遲單</small>{s.metrics.lateOrderCount} 張</span>
+        <span><small>利用率</small>{pct(s.metrics.machineUtilizationRate)}</span>
+      </div>
+      <p className="scenario-reason">{s.recommendationReason}</p>
+      <Link to={`/gantt/${s.scenarioId}`} className="scenario-link">
+        查看時間軸 <span aria-hidden>→</span>
       </Link>
-    </div>
+    </article>
   );
 }
