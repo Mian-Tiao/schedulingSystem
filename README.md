@@ -124,7 +124,7 @@ npm run build
      }
      ```
    * **預期行為**:
-     1. 將急單存入 `ProductionOrder` 資料庫，狀態設為 `scheduled`。
+     1. **【重要】** 將該急單正式新增至 `ProductionOrder` 資料庫表中，使其進入「訂單管理」系統（狀態設為 `SCHEDULED`），在訂單列表中可被查詢。
      2. 若 `strategy === 'insert'`，分別在現有的 4 個排程方案中執行直接插入，更新任務與 `baselineTasks`；若有方案無法插入，回傳錯誤（回滾資料庫）。
      3. 若 `strategy === 'rebuild'`，將急單加入後以原 objective 重新跑排程引擎，覆蓋資料庫中的方案任務。
 
