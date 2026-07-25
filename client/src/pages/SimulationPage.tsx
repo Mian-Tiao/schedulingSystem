@@ -38,7 +38,7 @@ interface BreakdownResult {
   reverseAnalysis: { latestSafeRepairTime: string | null; message: string };
   suggestions: {
     minimumLateOrderCount: number;
-    transferMachines: { machineCode: string; machineName: string }[];
+    transferMachines: { machineId: string; machineCode: string; machineName: string }[];
     priorityOrders: string[];
     negotiableOrders: string[];
   };
@@ -391,9 +391,18 @@ export function SimulationPage() {
                     <li>・最少會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
                     <li>
                       ・可考慮轉移工作到:
-                      {bdResult.suggestions.transferMachines.length > 0
-                        ? bdResult.suggestions.transferMachines.map((m) => `${m.machineCode} ${m.machineName}`).join('、')
-                        : '(沒有其他機台可支援)'}
+                      {(() => {
+                        const brokenMachine = machines?.find((m) => m.id === bdForm.machineId);
+                        const compatible = bdResult.suggestions.transferMachines.filter((tm) => {
+                          const machineInfo = machines?.find((m) => m.id === tm.machineId);
+                          return machineInfo?.supportedProductIds.some((pId) =>
+                            brokenMachine?.supportedProductIds.includes(pId)
+                          );
+                        });
+                        return compatible.length > 0
+                          ? compatible.map((m) => `${m.machineCode} ${m.machineName}`).join('、')
+                          : '(沒有其他相容機台可支援)';
+                      })()}
                     </li>
                     {bdResult.suggestions.priorityOrders.length > 0 && (
                       <li>・建議優先處理:{bdResult.suggestions.priorityOrders.join('、')}</li>
