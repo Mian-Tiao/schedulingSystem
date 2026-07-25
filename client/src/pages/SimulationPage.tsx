@@ -1,13 +1,13 @@
 /**
  * 情境模擬:急單插入、機台故障。純模擬,不寫入正式排程。
  */
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, apiPost } from '../api/client';
 import { useMachines, useProducts, useScenarios } from '../api/hooks';
 import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading, PageHeader, PageMetrics } from '../components/ui';
-import type { Metrics, OrderImpact } from '../types';
-import { fmtDateTime, fmtMinutes, fromLocalInput, pct, toLocalInput } from '../utils/time';
+import type { Machine, Metrics, OrderImpact, Task } from '../types';
+import { fmtDateTime, fmtMinutes, fmtTime, fromLocalInput, pct, toLocalInput } from '../utils/time';
 
 type Tab = 'urgent' | 'breakdown';
 
@@ -28,9 +28,10 @@ interface UrgentResult {
 
 interface BreakdownResult {
   baseline: { metrics: Metrics };
-  breakdown: { machineName: string; startTime: string; estimatedRepairTime: string };
+  breakdown: { machineId: string; machineName: string; startTime: string; estimatedRepairTime: string };
   withEstimatedRepair: {
     metrics: Metrics;
+    tasks: Task[];
     impacts: OrderImpact[];
     lateOrders: { orderNumber: string; tardinessMinutes: number; priority: number }[];
     lateOrderCount: number;
@@ -414,6 +415,11 @@ export function SimulationPage() {
                 </div>
               )}
 
+              <GanttPreview
+                tasks={bdResult.withEstimatedRepair.tasks}
+                breakdown={bdResult.breakdown}
+                machines={machines ?? []}
+              />
               <div className="mt-3">
                 <Button
                   variant="primary"
@@ -501,5 +507,200 @@ function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+const TASK_TYPE_LABELS: Record<string, string> = {
+  production: '生產',
+  setup: '換線',
+  cleaning: '清洗',
+  maintenance: '維保',
+};
+
+function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown: { machineId: string; startTime: string; estimatedRepairTime: string }; machines: Machine[] }) {
+  const timeRange = useMemo(() => {
+    if (tasks.length === 0) return null;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const t of tasks) {
+      min = Math.min(min, Date.parse(t.startTime));
+      max = Math.max(max, Date.parse(t.endTime));
+    }
+    if (breakdown) {
+      min = Math.min(min, Date.parse(breakdown.startTime));
+      max = Math.max(max, Date.parse(breakdown.estimatedRepairTime));
+    }
+    min -= 2 * 3600_000;
+    max += 2 * 3600_000;
+    return { start: min, end: max };
+  }, [tasks, breakdown]);
+
+  const pxPerMin = 0.22;
+  const rowHeight = 36;
+  const labelWidth = 100;
+
+  const sortedMachines = useMemo(() => {
+    return [...(machines ?? [])].sort((a, b) => a.machineCode.localeCompare(b.machineCode));
+  }, [machines]);
+
+  const xOf = (timeStr: string) => {
+    if (!timeRange) return 0;
+    const t = Date.parse(timeStr);
+    return ((t - timeRange.start) / 60_000) * pxPerMin;
+  };
+
+  const wOf = (startTimeStr: string, endTimeStr: string) => {
+    const s = Date.parse(startTimeStr);
+    const e = Date.parse(endTimeStr);
+    return ((e - s) / 60_000) * pxPerMin;
+  };
+
+  const ticks = useMemo(() => {
+    if (!timeRange) return [];
+    const arr = [];
+    const startHour = new Date(timeRange.start);
+    startHour.setMinutes(0, 0, 0);
+    let current = startHour.getTime();
+    while (current < timeRange.end) {
+      arr.push(current);
+      current += 12 * 3600_000;
+    }
+    return arr;
+  }, [timeRange]);
+
+  if (!timeRange) return null;
+
+  const totalWidth = ((timeRange.end - timeRange.start) / 60_000) * pxPerMin;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mt-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-700">⚙️ 預估調整後甘特圖預覽</span>
+        <div className="flex gap-3 text-[10px] text-slate-500">
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>生產
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 bg-yellow-500 rounded-sm"></span>換線
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm"></span>清洗
+          </span>
+          <span className="flex items-center gap-1">
+            <span
+              className="w-2.5 h-2.5 rounded-sm"
+              style={{
+                background: 'repeating-linear-gradient(45deg, #ef4444, #ef4444 2px, #fca5a5 2px, #fca5a5 4px)',
+              }}
+            ></span>
+            機台故障
+          </span>
+        </div>
+      </div>
+
+      <div className="relative border border-slate-200 bg-white rounded overflow-hidden flex flex-col">
+        {/* Timeline Header */}
+        <div className="flex border-b border-slate-200 bg-slate-100" style={{ height: 24 }}>
+          <div
+            className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 px-2 flex items-center text-[10px] font-semibold text-slate-500"
+            style={{ width: labelWidth }}
+          >
+            機台
+          </div>
+          <div className="relative flex-1 overflow-hidden" style={{ height: 24 }}>
+            <div style={{ width: totalWidth, height: 24, position: 'relative' }}>
+              {ticks.map((t: number) => (
+                <div
+                  key={t}
+                  className="absolute text-[9px] text-slate-400 border-l border-slate-200 pl-1"
+                  style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin, top: 4 }}
+                >
+                  {new Intl.DateTimeFormat('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).format(new Date(t))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable Rows */}
+        <div className="overflow-x-auto max-w-full">
+          <div style={{ width: labelWidth + totalWidth }} className="flex flex-col">
+            {sortedMachines.map((m: Machine) => (
+              <div key={m.id} className="flex border-b border-slate-100 last:border-b-0" style={{ height: rowHeight }}>
+                {/* Machine Code */}
+                <div
+                  className="sticky left-0 z-10 bg-white border-r border-slate-200 px-2 flex items-center text-xs font-medium text-slate-700"
+                  style={{ width: labelWidth }}
+                >
+                  {m.machineCode}
+                </div>
+
+                {/* Timeline row */}
+                <div className="relative flex-1" style={{ height: rowHeight, width: totalWidth }}>
+                  {ticks.map((t: number) => (
+                    <div
+                      key={t}
+                      className="absolute inset-y-0 w-px bg-slate-50"
+                      style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin }}
+                    />
+                  ))}
+
+                  {/* Tasks */}
+                  {tasks
+                    .filter((t: Task) => t.machineId === m.id)
+                    .map((t: Task) => {
+                      const left = xOf(t.startTime);
+                      const width = Math.max(2, wOf(t.startTime, t.endTime));
+                      const isProduction = t.taskType === 'production';
+                      const taskName = t.taskId.includes('-production')
+                        ? t.taskId.split('-')[2] || t.taskId.split('-')[1]
+                        : t.taskId.split('-')[1] || t.taskId.split('-')[0];
+                      const taskStyle: React.CSSProperties = {
+                        left,
+                        width,
+                        top: 5,
+                        height: rowHeight - 10,
+                        backgroundColor:
+                          t.taskType === 'production'
+                            ? '#3b82f6'
+                            : t.taskType === 'setup'
+                              ? '#eab308'
+                              : t.taskType === 'cleaning'
+                                ? '#10b981'
+                                : '#6b7280',
+                      };
+                      return (
+                        <div
+                          key={t.taskId}
+                          className="absolute rounded-sm text-[9px] text-white overflow-hidden flex items-center px-1 font-semibold"
+                          style={taskStyle}
+                          title={`${isProduction ? '生產 ' + taskName : TASK_TYPE_LABELS[t.taskType] ?? t.taskType} (${fmtTime(t.startTime)}-${fmtTime(t.endTime)})`}
+                        >
+                          <span className="truncate">{isProduction ? taskName : ''}</span>
+                        </div>
+                      );
+                    })}
+
+                  {/* Breakdown Overlay */}
+                  {breakdown && breakdown.machineId === m.id && (
+                    <div
+                      className="absolute rounded-sm border border-red-500"
+                      style={{
+                        left: xOf(breakdown.startTime),
+                        width: wOf(breakdown.startTime, breakdown.estimatedRepairTime),
+                        top: 4,
+                        height: rowHeight - 8,
+                        background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 4px, rgba(254,226,226,0.6) 4px, rgba(254,226,226,0.6) 8px)',
+                      }}
+                      title={`故障時間: ${fmtDateTime(breakdown.startTime)} - ${fmtDateTime(breakdown.estimatedRepairTime)}`}
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
