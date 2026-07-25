@@ -2,6 +2,7 @@
  * 情境模擬:急單插入、機台故障。純模擬,不寫入正式排程。
  */
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ApiError, apiPost } from '../api/client';
 import { useMachines, useProducts, useScenarios } from '../api/hooks';
 import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading, PageHeader, PageMetrics } from '../components/ui';
@@ -50,6 +51,38 @@ export function SimulationPage() {
   const [tab, setTab] = useState<Tab>('urgent');
   const top = scenarios?.find((s) => s.rank === 1) ?? null;
 
+  const navigate = useNavigate();
+  const [applyBusy, setApplyBusy] = useState<string | null>(null);
+
+  const handleApplyUrgent = async (strategy: 'insert' | 'rebuild') => {
+    setApplyBusy(strategy);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (strategy === 'insert') {
+        alert('急單插入策略套用成功！(模擬)');
+      } else {
+        alert('急單重排策略套用成功！(模擬)');
+      }
+      navigate('/gantt');
+    } catch {
+      alert('套用失敗，請重試');
+    } finally {
+      setApplyBusy(null);
+    }
+  };
+
+  const handleApplyBreakdown = async () => {
+    setApplyBusy('breakdown');
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      alert('故障排程套用成功！(模擬)');
+      navigate('/gantt');
+    } catch {
+      alert('套用失敗，請重試');
+    } finally {
+      setApplyBusy(null);
+    }
+  };
   const [urgentForm, setUrgentForm] = useState({
     orderNumber: 'URGENT-001',
     productId: '',
@@ -220,6 +253,15 @@ export function SimulationPage() {
                       )}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">此策略不影響任何既有訂單。</p>
+                    <div className="mt-3">
+                      <Button
+                        variant="primary"
+                        onClick={() => handleApplyUrgent('insert')}
+                        disabled={applyBusy !== null}
+                      >
+                        {applyBusy === 'insert' ? '套用中…' : '套用此策略'}
+                      </Button>
+                    </div>
                   </>
                 ) : (
                   <Banner tone="error">{urgentResult.insert.reason}</Banner>
@@ -244,6 +286,15 @@ export function SimulationPage() {
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">沒有訂單受影響。</p>
                 )}
+                <div className="mt-3">
+                  <Button
+                    variant="primary"
+                    onClick={() => handleApplyUrgent('rebuild')}
+                    disabled={applyBusy !== null}
+                  >
+                    {applyBusy === 'rebuild' ? '套用中…' : '套用此策略'}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -337,6 +388,16 @@ export function SimulationPage() {
                   </ul>
                 </div>
               )}
+
+              <div className="mt-3">
+                <Button
+                  variant="primary"
+                  onClick={handleApplyBreakdown}
+                  disabled={applyBusy !== null}
+                >
+                  {applyBusy === 'breakdown' ? '套用中…' : '套用故障調整'}
+                </Button>
+              </div>
             </div>
           )}
         </section>
