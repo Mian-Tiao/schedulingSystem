@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>甘特圖 — 智慧排程系統</title>
+    <link rel="stylesheet" href="base.css" />
+    <!-- 需要自訂樣式的話,建立 gantt.css 後在這裡引入 -->
+    <style>
+      /* 甘特圖專用樣式(也可搬到 gantt.css) */
+      .gantt-scroll { overflow-x: auto; }
+      .gantt-row { position: relative; display: flex; border-bottom: 1px solid #f1f5f9; }
+      .gantt-label {
+        position: sticky; left: 0; z-index: 5; flex-shrink: 0;
+        display: flex; align-items: center; gap: 4px;
+        background: var(--surface); border-right: 1px solid var(--border);
+        padding: 0 8px; font-size: 12px; font-weight: 500;
+      }
+      .gantt-track { position: relative; flex: 1; }
+      .gantt-task {
+        position: absolute; border-radius: 4px; color: #fff; font-size: 10px;
+        line-height: 1.2; overflow: hidden; user-select: none; padding: 2px 4px;
+      }
+      .gantt-task.production { background: var(--production); cursor: grab; }
+      .gantt-task.production:active { cursor: grabbing; }
+      .gantt-task.setup { background: var(--setup); cursor: pointer; }
+      .gantt-task.cleaning { background: var(--cleaning); cursor: pointer; }
+      .gantt-task.maintenance {
+        background: var(--maintenance); cursor: pointer;
+        background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,.5) 4px, rgba(255,255,255,.5) 8px);
+      }
+      .gantt-task.late { border: 2px solid var(--late); }
+      .gantt-task.adjusted { box-shadow: 0 0 0 2px #a855f7; }
+      .gantt-ghost {
+        position: absolute; border: 2px dashed var(--primary);
+        background: rgba(59,130,246,.25); border-radius: 4px; pointer-events: none; z-index: 8;
+      }
+      .gantt-ghost-label {
+        position: absolute; top: -20px; left: 0; white-space: nowrap;
+        background: #1e293b; color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+      }
+      .gantt-tick { position: absolute; top: 0; height: 100%; }
+      .gantt-tick-label { position: absolute; top: 6px; transform: translateX(-50%); white-space: nowrap; font-size: 10px; }
+      .gantt-tick-line { position: absolute; bottom: 0; width: 1px; background: #e2e8f0; }
+      .gantt-grid { position: absolute; inset: 0 auto 0 auto; width: 1px; background: #f1f5f9; }
+      .legend-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="navbar-brand">智慧排程系統<small>Lean Scheduling Assistant</small></div>
+      <div class="navbar-nav">
+        <a class="nav-link" href="index.html">首頁</a>
+        <a class="nav-link" href="orders.html">訂單管理</a>
+        <a class="nav-link" href="machines.html">機台管理</a>
+        <a class="nav-link" href="scheduling.html">排程中心</a>
+        <a class="nav-link active" href="gantt.html">甘特圖</a>
+        <a class="nav-link" href="simulation.html">情境模擬</a>
+      </div>
+    </nav>
+
+    <div class="container" style="max-width: 100%">
+      <div class="page-header">
+        <div class="flex flex-wrap">
+          <h1 class="page-title">甘特圖排程</h1>
+          <select class="input" id="scenarioSel" style="width: 220px"></select>
+          <span id="adjBadge"></span>
+        </div>
+        <div class="flex flex-wrap">
+          <button class="btn btn-secondary btn-sm" data-scale="0">小時</button>
+          <button class="btn btn-primary btn-sm" data-scale="1">班次</button>
+          <button class="btn btn-secondary btn-sm" data-scale="2">日</button>
+          <button class="btn btn-secondary btn-sm" id="zoomIn" title="放大">🔍+</button>
+          <button class="btn btn-secondary btn-sm" id="zoomOut" title="縮小">🔍−</button>
+          <span style="width: 1px; height: 20px; background: var(--border)"></span>
+          <button class="btn btn-secondary btn-sm" id="btnUndo" disabled>↩ 復原</button>
+          <button class="btn btn-secondary btn-sm" id="btnRedo" disabled>↪ 重做</button>
+          <button class="btn btn-secondary btn-sm" id="btnReset">⟲ 回復原始排程</button>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap small muted" style="gap: 12px; margin-bottom: 8px">
+        <span><span class="legend-dot" style="background: var(--production)"></span>生產</span>
+        <span><span class="legend-dot" style="background: var(--setup)"></span>換模</span>
+        <span><span class="legend-dot" style="background: var(--cleaning)"></span>清洗</span>
+        <span><span class="legend-dot" style="background: var(--maintenance)"></span>維護/停機</span>
+        <span><span class="legend-dot" style="border: 2px solid var(--late); background: var(--production)"></span>逾期訂單</span>
+        <span class="faint">提示:拖曳藍色生產區塊可改開始時間或換機台(每 15 分鐘吸附);點其他區塊看詳細。</span>
+      </div>
+
+      <div id="msg"></div>
+      <div id="chartCard" class="card" style="padding: 0">
+        <div class="state"><span class="spinner"></span> 讀取中…</div>
+      </div>
+      <div id="diffArea" class="mt-4"></div>
+    </div>
+
+    <!-- 任務詳細 -->
+    <div class="modal-overlay" id="detailModal" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">工作詳細資訊</h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div id="detailBody"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" data-close>關閉</button></div>
+      </div>
+    </div>
+
+    <script src="common.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const TASK_LABEL = { production: '生產', setup: '換模', cleaning: '清洗', maintenance: '維護/停機' };
+      const SCALES = [
+        { label: '小時', pxPerMin: 1.6 },
+        { label: '班次', pxPerMin: 0.55 },
+        { label: '日', pxPerMin: 0.16 },
+      ];
+      const ROW_H = 46, HEADER_H = 40, LABEL_W = 150, SNAP_MIN = 15;
+      const DAY = 86400000, TZOFF = 8 * 3600000;
+
+      // ---- 狀態 ----
+      let scenarios = [], machines = [], orders = [], products = [];
+      let scenarioId = null, tasks = [];
+      let scaleIdx = 1, zoom = 1;
+      let drag = null;
+      // undo/redo 歷史:每筆 {tasks, adjustment}
+      let history = [], cursor = -1;
+
+      const orderById = (id) => orders.find((o) => o.id === id);
+      const productOf = (o) => o && products.find((p) => p.id === o.productId);
+
+      // ================= 載入 =================
+      async function init() {
+        if (!(await checkBackend())) { $('chartCard').innerHTML = ''; return; }
+        [scenarios, machines, orders, products] = await Promise.all([
+          api('/schedules'), api('/machines'), api('/orders'), api('/products'),
+        ]);
+        if (!scenarios.length) {
+          $('chartCard').innerHTML = '<div class="state"><span class="state-icon">📊</span>尚未產生排程方案,請先到「排程中心」執行排程。</div>';
+          $('scenarioSel').innerHTML = '';
+          return;
+        }
+        scenarios.sort((a, b) => a.rank - b.rank);
+        $('scenarioSel').innerHTML = scenarios
+          .map((s) => `<option value="${s.scenarioId}">${s.algorithm} 方案(第 ${s.rank} 名)</option>`).join('');
+        scenarioId = scenarios[0].scenarioId;
+        await loadScenario();
+      }
+
+      async function loadScenario() {
+        const d = await api('/schedules/' + scenarioId);
+        tasks = d.tasks;
+        history = [{ tasks: tasks, adjustment: null }];
+        cursor = 0;
+        $('adjBadge').innerHTML = d.isManuallyAdjusted ? '<span class="badge badge-blue">已人工調整</span>' : '';
+        $('diffArea').innerHTML = '';
+        $('msg').innerHTML = '';
+        render();
+        updateUndoRedo();
+      }
+
+      $('scenarioSel').addEventListener('change', (e) => { scenarioId = e.target.value; loadScenario(); });
+
+      // ================= 繪圖 =================
+      function timeRange() {
+        let min = Infinity, max = -Infinity;
+        for (const t of tasks) { min = Math.min(min, Date.parse(t.startTime)); max = Math.max(max, Date.parse(t.endTime)); }
+        if (!isFinite(min)) return null;
+        const start = Math.floor((min + TZOFF) / DAY) * DAY - TZOFF;
+        const end = Math.ceil((max + TZOFF) / DAY) * DAY - TZOFF;
+        return { start, end };
+      }
+
+      function render() {
+        const range = timeRange();
+        const card = $('chartCard');
+        if (!range) { card.innerHTML = '<div class="state">此方案沒有任務。</div>'; return; }
+        const pxPerMin = SCALES[scaleIdx].pxPerMin * zoom;
+        const totalMin = (range.end - range.start) / 60000;
+        const chartW = totalMin * pxPerMin;
+        const rows = [...machines].sort((a, b) => a.machineCode.localeCompare(b.machineCode));
+        const xOf = (iso) => ((Date.parse(iso) - range.start) / 60000) * pxPerMin;
+        const wOf = (t) => Math.max(4, ((Date.parse(t.endTime) - Date.parse(t.startTime)) / 60000) * pxPerMin);
+
+        // 時間刻度
+        const hour = 3600000;
+        const step = pxPerMin >= 1 ? hour : pxPerMin >= 0.4 ? 4 * hour : DAY;
+        let ticks = '';
+        for (let t = range.start; t <= range.end; t += step) {
+          const midnight = new Date(t + TZOFF).getUTCHours() === 0;
+          const x = ((t - range.start) / 60000) * pxPerMin;
+          const label = midnight ? fmtDateTime(t) : new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(t));
+          ticks += `<div class="gantt-tick" style="left:${x}px">
+            <span class="gantt-tick-label ${midnight ? '' : 'faint'}" style="${midnight ? 'font-weight:600' : ''}">${label}</span>
+            <span class="gantt-tick-line" style="height:8px;background:${midnight ? '#94a3b8' : '#e2e8f0'}"></span></div>`;
+        }
+
+        let html = `<div class="gantt-scroll"><div style="width:${LABEL_W + chartW}px;min-width:100%">
+          <div style="position:relative;height:${HEADER_H}px;margin-left:${LABEL_W}px;border-bottom:1px solid var(--border)">${ticks}</div>`;
+
+        for (const m of rows) {
+          const mtasks = tasks.filter((t) => t.machineId === m.id);
+          let blocks = '';
+          for (const t of mtasks) {
+            const o = t.orderId ? orderById(t.orderId) : null;
+            const p = productOf(o);
+            const late = o && t.taskType === 'production' && Date.parse(t.endTime) > Date.parse(o.dueDate);
+            const cls = [t.taskType, late ? 'late' : '', t.isManuallyAdjusted ? 'adjusted' : ''].join(' ');
+            const w = wOf(t);
+            let text = t.taskType === 'production'
+              ? `<b>${escapeHtml(o ? o.orderNumber : '')}</b>${w > 90 && p ? ' ' + escapeHtml(p.productName) : ''}`
+              : (w > 28 ? TASK_LABEL[t.taskType] : '');
+            blocks += `<div class="gantt-task ${cls}" data-task="${t.taskId}"
+              style="left:${xOf(t.startTime)}px;width:${w}px;top:6px;height:${ROW_H - 12}px"
+              title="${escapeHtml((o ? o.orderNumber : TASK_LABEL[t.taskType]))} ${fmtDateTime(t.startTime)}~${fmtDateTime(t.endTime)}">${text}</div>`;
+          }
+          html += `<div class="gantt-row" data-machine="${m.id}" style="height:${ROW_H}px">
+            <div class="gantt-label" style="width:${LABEL_W}px">${escapeHtml(m.machineCode)}
+              <span class="faint" style="font-weight:400">${escapeHtml(m.machineName)}</span>
+              ${m.status === 'disabled' ? '<span class="badge badge-slate">停用</span>' : ''}</div>
+            <div class="gantt-track">${blocks}</div></div>`;
+        }
+        html += '</div></div>';
+        card.innerHTML = html;
+
+        // 綁定拖曳/點擊
+        card.querySelectorAll('.gantt-task').forEach((elm) => attachTaskEvents(elm, range, pxPerMin, rows));
+      }
+
+      // ================= 拖曳 =================
+      function attachTaskEvents(elm, range, pxPerMin, rows) {
+        const taskId = elm.dataset.task;
+        const task = tasks.find((t) => t.taskId === taskId);
+        if (!task) return;
+
+        if (task.taskType !== 'production') {
+          elm.addEventListener('click', () => openDetail(task));
+          return;
+        }
+
+        elm.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          elm.setPointerCapture(e.pointerId);
+          drag = { task, elm, startX: e.clientX, startY: e.clientY, deltaMin: 0, rowDelta: 0, moved: false, range, pxPerMin, rows };
+        });
+        elm.addEventListener('pointermove', (e) => {
+          if (!drag || drag.task.taskId !== taskId) return;
+          const dxMin = (e.clientX - drag.startX) / pxPerMin;
+          drag.deltaMin = Math.round(dxMin / SNAP_MIN) * SNAP_MIN;
+          drag.rowDelta = Math.round((e.clientY - drag.startY) / ROW_H);
+          if (Math.abs(drag.deltaMin) >= SNAP_MIN || drag.rowDelta !== 0) drag.moved = true;
+          drawGhost();
+        });
+        elm.addEventListener('pointerup', () => onDrop());
+      }
+
+      function drawGhost() {
+        document.querySelectorAll('.gantt-ghost').forEach((g) => g.remove());
+        if (!drag || !drag.moved) return;
+        const { task, range, pxPerMin, rows } = drag;
+        const fromRow = rows.findIndex((m) => m.id === task.machineId);
+        const toRow = Math.min(rows.length - 1, Math.max(0, fromRow + drag.rowDelta));
+        const newStart = Date.parse(task.startTime) + drag.deltaMin * 60000;
+        const w = Math.max(4, ((Date.parse(task.endTime) - Date.parse(task.startTime)) / 60000) * pxPerMin);
+        const x = ((newStart - range.start) / 60000) * pxPerMin;
+        const track = document.querySelectorAll('.gantt-track')[toRow];
+        if (!track) return;
+        const ghost = el('div', { class: 'gantt-ghost' });
+        ghost.style.cssText += `left:${x}px;width:${w}px;top:6px;height:${ROW_H - 12}px`;
+        ghost.innerHTML = `<span class="gantt-ghost-label">${fmtDateTime(newStart)} → ${escapeHtml(rows[toRow].machineCode)}</span>`;
+        track.appendChild(ghost);
+      }
+
+      async function onDrop() {
+        if (!drag) return;
+        const d = drag; drag = null;
+        document.querySelectorAll('.gantt-ghost').forEach((g) => g.remove());
+        if (!d.moved) { openDetail(d.task); return; }
+
+        const fromRow = d.rows.findIndex((m) => m.id === d.task.machineId);
+        const toRow = Math.min(d.rows.length - 1, Math.max(0, fromRow + d.rowDelta));
+        const targetMachine = d.rows[toRow];
+        const newStart = new Date(Date.parse(d.task.startTime) + d.deltaMin * 60000).toISOString();
+        const payload = { taskId: d.task.taskId, machineId: targetMachine.id, startTime: newStart };
+
+        setMsg('info', '<span class="spinner"></span> 驗證與計算中…');
+        try {
+          const v = await api(`/schedules/${scenarioId}/validate-adjustment`, { method: 'POST', body: payload });
+          if (!v.valid) { setMsg('error', '無法移動:' + v.errors.join(';')); return; }
+          const r = await api(`/schedules/${scenarioId}/adjust`, { method: 'POST', body: payload });
+          tasks = r.tasks;
+          pushSnapshot(tasks, payload);
+          showDiff(v.metricsBefore, r.metrics, r.delayDiffs || []);
+          setMsg(r.warnings && r.warnings.length ? 'warn' : 'success',
+            '調整成功,已重新計算後續工作與績效' + (r.warnings && r.warnings.length ? ';注意:' + r.warnings.join(';') : ''));
+          $('adjBadge').innerHTML = '<span class="badge badge-blue">已人工調整</span>';
+          render();
+          updateUndoRedo();
+        } catch (err) { setMsg('error', '無法移動:' + err.message); }
+      }
+
+      // ================= undo / redo / reset =================
+      function pushSnapshot(t, adjustment) {
+        history = history.slice(0, cursor + 1);
+        history.push({ tasks: t, adjustment });
+        cursor = history.length - 1;
+      }
+      function updateUndoRedo() {
+        $('btnUndo').disabled = cursor <= 0;
+        $('btnRedo').disabled = cursor >= history.length - 1;
+      }
+      async function replayTo(target) {
+        await api(`/schedules/${scenarioId}/reset`, { method: 'POST' });
+        for (let i = 1; i <= target; i++) {
+          const adj = history[i].adjustment;
+          if (adj) await api(`/schedules/${scenarioId}/adjust`, { method: 'POST', body: adj });
+        }
+        const d = await api('/schedules/' + scenarioId);
+        tasks = d.tasks;
+        $('adjBadge').innerHTML = d.isManuallyAdjusted ? '<span class="badge badge-blue">已人工調整</span>' : '';
+        render();
+      }
+      $('btnUndo').addEventListener('click', async () => {
+        if (cursor <= 0) return;
+        setMsg('info', '<span class="spinner"></span> 復原中…');
+        try { cursor--; await replayTo(cursor); updateUndoRedo(); setMsg('success', '已復原上一步'); }
+        catch { setMsg('error', '復原失敗,請重新整理'); }
+      });
+      $('btnRedo').addEventListener('click', async () => {
+        if (cursor >= history.length - 1) return;
+        setMsg('info', '<span class="spinner"></span> 重做中…');
+        try {
+          const adj = history[cursor + 1].adjustment;
+          await api(`/schedules/${scenarioId}/adjust`, { method: 'POST', body: adj });
+          cursor++;
+          const dd = await api('/schedules/' + scenarioId); tasks = dd.tasks; render();
+          updateUndoRedo(); setMsg('success', '已重做');
+        } catch { setMsg('error', '重做失敗,該調整可能已不合法'); }
+      });
+      $('btnReset').addEventListener('click', async () => {
+        setMsg('info', '<span class="spinner"></span> 回復中…');
+        try {
+          const r = await api(`/schedules/${scenarioId}/reset`, { method: 'POST' });
+          tasks = r.tasks; history = [{ tasks, adjustment: null }]; cursor = 0;
+          $('adjBadge').innerHTML = ''; $('diffArea').innerHTML = '';
+          render(); updateUndoRedo(); setMsg('success', '已回復系統原始排程');
+        } catch (err) { setMsg('error', '回復失敗:' + err.message); }
+      });
+
+      // ================= 縮放/工具列 =================
+      document.querySelectorAll('[data-scale]').forEach((b) =>
+        b.addEventListener('click', () => {
+          scaleIdx = Number(b.dataset.scale);
+          document.querySelectorAll('[data-scale]').forEach((x) =>
+            x.className = 'btn btn-sm ' + (x === b ? 'btn-primary' : 'btn-secondary'));
+          render();
+        }));
+      $('zoomIn').addEventListener('click', () => { zoom = Math.min(4, zoom * 1.4); render(); });
+      $('zoomOut').addEventListener('click', () => { zoom = Math.max(0.3, zoom / 1.4); render(); });
+
+      // ================= 詳細 / 差異 / 訊息 =================
+      function openDetail(task) {
+        const o = task.orderId ? orderById(task.orderId) : null;
+        const p = productOf(o);
+        const m = machines.find((x) => x.id === task.machineId);
+        const late = o && task.taskType === 'production' && Date.parse(task.endTime) > Date.parse(o.dueDate);
+        const row = (k, v) => `<div class="flex" style="margin-bottom:4px"><span class="faint" style="width:90px">${k}</span><span>${v}</span></div>`;
+        $('detailBody').innerHTML =
+          row('類型', TASK_LABEL[task.taskType] + (task.isManuallyAdjusted ? ' <span class="badge badge-blue">已調整</span>' : '')) +
+          (o ? row('訂單編號', escapeHtml(o.orderNumber)) : '') +
+          (p ? row('產品', escapeHtml(p.productName)) : '') +
+          row('機台', m ? escapeHtml(m.machineCode + ' ' + m.machineName) : task.machineId) +
+          row('開始', fmtDateTime(task.startTime)) +
+          row('結束', fmtDateTime(task.endTime)) +
+          row('時長', fmtMinutes((Date.parse(task.endTime) - Date.parse(task.startTime)) / 60000)) +
+          (o ? row('交期', fmtDateTime(o.dueDate) + ' ' + (late ? '<span class="badge badge-red">⚠ 逾期</span>' : (task.taskType === 'production' ? '<span class="badge badge-green">✓ 準時</span>' : ''))) : '');
+        $('detailModal').hidden = false;
+      }
+
+      function showDiff(before, after, delays) {
+        if (!before || !after) return;
+        const item = (label, b, a, good) =>
+          `<div><span class="faint">${label}:</span> <span class="faint" style="text-decoration:line-through">${b}</span>
+           <span style="font-weight:600;color:${good ? 'var(--success)' : 'var(--danger)'}">${a}</span></div>`;
+        const delayHtml = delays.length
+          ? '<div class="small faint mt-2">受影響訂單:' + delays.map((d) =>
+              `${escapeHtml(d.orderNumber)}(延遲 ${d.oldTardinessMinutes} → ${d.newTardinessMinutes} 分)`).join('、') + '</div>'
+          : '';
+        $('diffArea').innerHTML = `<div class="card"><div class="card-title">調整前後差異</div>
+          <div class="grid grid-4 small">
+            ${item('準時交貨率', pct(before.onTimeDeliveryRate), pct(after.onTimeDeliveryRate), after.onTimeDeliveryRate >= before.onTimeDeliveryRate)}
+            ${item('平均延遲', fmtMinutes(before.averageTardinessMinutes), fmtMinutes(after.averageTardinessMinutes), after.averageTardinessMinutes <= before.averageTardinessMinutes)}
+            ${item('Makespan', fmtMinutes(before.makespanMinutes), fmtMinutes(after.makespanMinutes), after.makespanMinutes <= before.makespanMinutes)}
+            ${item('延遲訂單數', before.lateOrderCount + ' 張', after.lateOrderCount + ' 張', after.lateOrderCount <= before.lateOrderCount)}
+          </div>${delayHtml}</div>`;
+      }
+
+      function setMsg(kind, html) {
+        $('msg').innerHTML = html ? `<div class="banner banner-${kind === 'success' ? 'success' : kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : 'info'}">${html}</div>` : '';
+      }
+
+      document.querySelectorAll('[data-close]').forEach((b) =>
+        b.addEventListener('click', (e) => { e.target.closest('.modal-overlay').hidden = true; }));
+
+      init().catch((e) => { $('chartCard').innerHTML = `<div class="banner banner-error">${escapeHtml(e.message)}</div>`; });
+    </script>
+  </body>
+</html>

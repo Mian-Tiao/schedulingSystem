@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>排程中心 — 智慧排程系統</title>
+    <link rel="stylesheet" href="base.css" />
+    <!-- 需要自訂樣式的話,建立 scheduling.css 後在這裡引入 -->
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="navbar-brand">智慧排程系統<small>Lean Scheduling Assistant</small></div>
+      <div class="navbar-nav">
+        <a class="nav-link" href="index.html">首頁</a>
+        <a class="nav-link" href="orders.html">訂單管理</a>
+        <a class="nav-link" href="machines.html">機台管理</a>
+        <a class="nav-link active" href="scheduling.html">排程中心</a>
+        <a class="nav-link" href="gantt.html">甘特圖</a>
+        <a class="nav-link" href="simulation.html">情境模擬</a>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">排程中心</h1>
+          <p class="page-subtitle">選擇排程目標,系統執行 FIFO / EDD / SPT / CR 四種演算法並比較推薦。</p>
+        </div>
+      </div>
+
+      <!-- 步驟一:執行 -->
+      <div class="card">
+        <div class="card-title">1. 選擇排程目標,執行排程</div>
+        <div class="flex flex-wrap" style="align-items: flex-end">
+          <label class="field" style="margin: 0">
+            <span class="field-label">本次排程最重要的目標是?</span>
+            <select class="input" id="objective" style="width: 260px">
+              <option value="ON_TIME_DELIVERY">優先準時交貨</option>
+              <option value="MIN_AVG_TARDINESS">優先降低平均延遲</option>
+              <option value="MIN_MAKESPAN">優先縮短總完工時間</option>
+              <option value="MAX_UTILIZATION">優先提高機台利用率</option>
+              <option value="MIN_CHANGEOVER">優先降低換模與清洗時間</option>
+              <option value="BALANCED">綜合平衡</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" id="btnRun">▶ 執行排程</button>
+          <span id="runStatus" class="small muted"></span>
+        </div>
+        <div id="issues"></div>
+      </div>
+
+      <!-- 步驟二/三:結果 -->
+      <div id="resultArea" class="mt-4"></div>
+    </div>
+
+    <script src="common.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const OBJ_LABEL = {
+        ON_TIME_DELIVERY: '優先準時交貨', MIN_AVG_TARDINESS: '優先降低平均延遲',
+        MIN_MAKESPAN: '優先縮短總完工時間', MAX_UTILIZATION: '優先提高機台利用率',
+        MIN_CHANGEOVER: '優先降低換模與清洗時間', BALANCED: '綜合平衡',
+      };
+      // 比較表要顯示的指標:key / 名稱 / 格式 / 越大越好?
+      const METRICS = [
+        ['onTimeDeliveryRate', '準時交貨率', pct, 'high'],
+        ['averageTardinessMinutes', '平均延遲時間', fmtMinutes, 'low'],
+        ['maximumTardinessMinutes', '最大延遲時間', fmtMinutes, 'low'],
+        ['lateOrderCount', '延遲訂單數', (v) => v + ' 張', 'low'],
+        ['makespanMinutes', '總完工時間', fmtMinutes, 'low'],
+        ['machineUtilizationRate', '機台利用率(純生產)', pct, 'high'],
+        ['machineOccupancyRate', '機台占用率(含換模清洗)', pct, 'high'],
+        ['totalSetupMinutes', '總換模時間', fmtMinutes, 'low'],
+        ['totalCleaningMinutes', '總清洗時間', fmtMinutes, 'low'],
+        ['averageFlowTimeMinutes', '平均流程時間', fmtMinutes, 'low'],
+      ];
+
+      $('btnRun').addEventListener('click', async () => {
+        $('issues').innerHTML = '';
+        $('runStatus').innerHTML = '<span class="spinner"></span> 正在執行四種演算法並計算績效…';
+        $('btnRun').disabled = true;
+        try {
+          const r = await api('/schedules/generate', { method: 'POST', body: { objective: $('objective').value } });
+          (r.issues || []).forEach((i) =>
+            $('issues').insertAdjacentHTML('beforeend', `<div class="banner ${i.level === 'error' ? 'banner-error' : 'banner-warn'}">${escapeHtml(i.message)}</div>`));
+          await loadScenarios();
+          toast('排程完成', 'success');
+        } catch (err) {
+          $('issues').innerHTML = `<div class="banner banner-error">${escapeHtml(err.message)}</div>`;
+          (err.details || []).forEach((i) =>
+            $('issues').insertAdjacentHTML('beforeend', `<div class="banner banner-warn">${escapeHtml(i.message)}</div>`));
+        } finally {
+          $('runStatus').innerHTML = '';
+          $('btnRun').disabled = false;
+        }
+      });
+
+      async function loadScenarios() {
+        const list = await api('/schedules');
+        renderResult(list);
+      }
+
+      function renderResult(list) {
+        const area = $('resultArea');
+        if (!list.length) {
+          area.innerHTML = '<div class="state"><span class="state-icon">🗓️</span>尚未產生排程方案。請先建立產品、機台與訂單,再執行排程。</div>';
+          return;
+        }
+        list.sort((a, b) => a.rank - b.rank);
+        const top3 = list.filter((s) => s.rank <= 3);
+
+        // 推薦卡片
+        const medals = { 1: '🥇 推薦第一名', 2: '🥈 推薦第二名', 3: '🥉 推薦第三名' };
+        const cards = top3.map((s) => `<div class="card" style="${s.rank === 1 ? 'border-color:var(--primary);box-shadow:0 0 0 1px var(--primary-soft)' : ''}">
+          <div class="flex between">
+            <span class="small" style="font-weight:600">${medals[s.rank]}</span>
+            <span class="badge ${s.rank === 1 ? 'badge-blue' : 'badge-slate'}">${s.algorithm}</span></div>
+          <div style="font-size:24px;font-weight:700;margin:6px 0">${s.score} 分</div>
+          <p class="small muted" style="line-height:1.7;margin:0">${escapeHtml(s.recommendationReason)}</p>
+        </div>`).join('');
+
+        // 比較表
+        const head = list.map((s) => `<th>${s.rank === 1 ? '🏆 ' : ''}${s.algorithm}
+          ${s.isManuallyAdjusted ? '<span class="badge badge-blue">已調整</span>' : ''}
+          <div class="small faint" style="font-weight:400">第 ${s.rank} 名・${s.score} 分</div></th>`).join('');
+        const body = METRICS.map(([key, label, fmt, better]) => {
+          const vals = list.map((s) => s.metrics[key]);
+          const best = better === 'high' ? Math.max(...vals) : Math.min(...vals);
+          const distinct = new Set(vals).size > 1;
+          const cells = list.map((s) => {
+            const v = s.metrics[key];
+            const isBest = v === best && distinct;
+            return `<td class="${isBest ? '' : ''}" style="${isBest ? 'color:var(--success);font-weight:600' : ''}">${fmt(v)}${isBest ? ' <span class="small">最佳</span>' : ''}</td>`;
+          }).join('');
+          return `<tr><td class="muted">${label}</td>${cells}</tr>`;
+        }).join('');
+
+        // 未排入訂單警告
+        const warns = list.flatMap((s) => (s.unscheduledOrders || []).map((u) =>
+          `<div class="banner banner-warn">[${s.algorithm}] 訂單 ${escapeHtml(u.orderNumber)} 未排入:${escapeHtml(u.reason)}</div>`)).join('');
+
+        area.innerHTML = `
+          <h2 style="font-size:15px;margin:8px 0 12px">2. 推薦方案(目標:${OBJ_LABEL[list[0].objective] || list[0].objective},${fmtDateTime(list[0].generatedAt)} 產生)</h2>
+          <div class="grid grid-3">${cards}</div>
+          <div class="card mt-4">
+            <div class="card-title">3. 方案績效比較</div>
+            <div class="table-wrap"><table class="table">
+              <thead><tr><th>指標</th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+            ${warns}
+          </div>`;
+      }
+
+      (async () => {
+        if (!(await checkBackend())) return;
+        try { await loadScenarios(); }
+        catch (e) { $('resultArea').innerHTML = `<div class="banner banner-error">${escapeHtml(e.message)}</div>`; }
+      })();
+    </script>
+  </body>
+</html>

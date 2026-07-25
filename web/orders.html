@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>訂單管理 — 智慧排程系統</title>
+    <link rel="stylesheet" href="base.css" />
+    <!-- 需要自訂樣式的話,建立 orders.css 後在這裡引入:
+         <link rel="stylesheet" href="orders.css" /> -->
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="navbar-brand">智慧排程系統<small>Lean Scheduling Assistant</small></div>
+      <div class="navbar-nav">
+        <a class="nav-link" href="index.html">首頁</a>
+        <a class="nav-link active" href="orders.html">訂單管理</a>
+        <a class="nav-link" href="machines.html">機台管理</a>
+        <a class="nav-link" href="scheduling.html">排程中心</a>
+        <a class="nav-link" href="gantt.html">甘特圖</a>
+        <a class="nav-link" href="simulation.html">情境模擬</a>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">訂單管理</h1>
+          <p class="page-subtitle">新增、修改、刪除、複製訂單,CSV 匯入,篩選與搜尋。</p>
+        </div>
+        <div class="flex">
+          <button class="btn btn-secondary" id="btnImport">匯入 CSV</button>
+          <button class="btn btn-primary" id="btnAdd">+ 新增訂單</button>
+        </div>
+      </div>
+
+      <!-- 篩選列 -->
+      <div class="card" style="padding: 12px">
+        <div class="flex flex-wrap">
+          <input class="input" id="fSearch" placeholder="搜尋訂單編號 / 備註" style="width: 200px" />
+          <select class="input" id="fProduct" style="width: 160px"><option value="">全部產品</option></select>
+          <select class="input" id="fStatus" style="width: 140px">
+            <option value="">全部狀態</option>
+            <option value="pending">尚未排程</option>
+            <option value="scheduled">已排程</option>
+          </select>
+          <select class="input" id="fSort" style="width: 150px">
+            <option value="dueDate">依交期排序</option>
+            <option value="orderNumber">依訂單編號</option>
+            <option value="priority">依優先級</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="listArea" class="mt-4">
+        <div class="state"><span class="spinner"></span> 讀取中…</div>
+      </div>
+    </div>
+
+    <!-- 新增/編輯 對話框 -->
+    <div class="modal-overlay" id="formModal" hidden>
+      <div class="modal modal-wide">
+        <div class="modal-header">
+          <h2 class="modal-title" id="formTitle">新增訂單</h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div id="formError"></div>
+        <div class="grid grid-2">
+          <label class="field"><span class="field-label">訂單編號<span class="req">*</span></span>
+            <input class="input" id="fldNumber" placeholder="例如 PO-001" /></label>
+          <label class="field"><span class="field-label">產品<span class="req">*</span></span>
+            <select class="input" id="fldProduct"></select></label>
+          <label class="field"><span class="field-label">數量<span class="req">*</span></span>
+            <input class="input" id="fldQty" type="number" min="1" value="10" /></label>
+          <label class="field"><span class="field-label">預估加工時間(分鐘)</span>
+            <input class="input" id="fldPt" type="number" min="1" placeholder="留空 = 數量 × 產品單位時間" />
+            <span class="field-hint" id="ptHint"></span></label>
+          <label class="field"><span class="field-label">可開始生產時間<span class="req">*</span></span>
+            <input class="input" id="fldRelease" type="datetime-local" /></label>
+          <label class="field"><span class="field-label">交期<span class="req">*</span></span>
+            <input class="input" id="fldDue" type="datetime-local" /></label>
+          <label class="field"><span class="field-label">優先級</span>
+            <select class="input" id="fldPriority">
+              <option value="1">1(最高)</option><option value="2">2(高)</option>
+              <option value="3" selected>3(一般)</option><option value="4">4(低)</option>
+              <option value="5">5(最低)</option>
+            </select></label>
+          <label class="field"><span class="field-label">狀態</span>
+            <select class="input" id="fldStatus">
+              <option value="pending">尚未排程</option><option value="scheduled">已排程</option>
+            </select></label>
+        </div>
+        <label class="field"><span class="field-label">可使用機台</span>
+          <div class="flex flex-wrap" id="fldMachines"
+            style="border: 1px solid var(--border); border-radius: 6px; padding: 8px"></div>
+          <span class="field-hint">不勾選 = 所有支援此產品的機台皆可</span></label>
+        <label class="field"><span class="field-label">備註</span>
+          <input class="input" id="fldNotes" /></label>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-close>取消</button>
+          <button class="btn btn-primary" id="btnSave">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CSV 匯入 對話框 -->
+    <div class="modal-overlay" id="csvModal" hidden>
+      <div class="modal modal-wide">
+        <div class="modal-header">
+          <h2 class="modal-title">批次匯入訂單(CSV)</h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div class="banner banner-info">
+          第一列為標題,必要欄位:orderNumber, productCode, quantity, releaseTime, dueDate;
+          選填:processingTime, priority, eligibleMachineCodes(分號分隔), notes。
+          時間格式:2026-08-10T08:00:00+08:00
+        </div>
+        <textarea class="input" id="csvText" style="height: 160px; font-family: monospace; font-size: 12px"
+          placeholder="orderNumber,productCode,quantity,releaseTime,dueDate,processingTime,priority
+PO-100,P-A,20,2026-08-10T08:00:00+08:00,2026-08-12T17:00:00+08:00,,3"></textarea>
+        <div id="csvResult"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-close>關閉</button>
+          <button class="btn btn-primary" id="btnDoImport">開始匯入</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="common.js"></script>
+    <script>
+      // ====== 狀態 ======
+      let products = [];
+      let machines = [];
+      let orders = [];
+      let editingId = null;
+
+      const $ = (id) => document.getElementById(id);
+      const priorityText = { 1: '1(最高)', 2: '2(高)', 3: '3(一般)', 4: '4(低)', 5: '5(最低)' };
+
+      // ====== 載入資料 ======
+      async function loadAll() {
+        [products, machines] = await Promise.all([api('/products'), api('/machines')]);
+        fillProductSelects();
+        await loadOrders();
+      }
+
+      function fillProductSelects() {
+        const opts = products.map((p) => `<option value="${p.id}">${escapeHtml(p.productCode)} ${escapeHtml(p.productName)}</option>`).join('');
+        $('fProduct').innerHTML = '<option value="">全部產品</option>' + opts;
+        $('fldProduct').innerHTML = opts;
+      }
+
+      async function loadOrders() {
+        const p = new URLSearchParams();
+        if ($('fSearch').value.trim()) p.set('search', $('fSearch').value.trim());
+        if ($('fProduct').value) p.set('productId', $('fProduct').value);
+        if ($('fStatus').value) p.set('status', $('fStatus').value);
+        const qs = p.toString();
+        orders = await api('/orders' + (qs ? '?' + qs : ''));
+        render();
+      }
+
+      // ====== 渲染列表 ======
+      function render() {
+        const sort = $('fSort').value;
+        const list = [...orders].sort((a, b) => {
+          if (sort === 'dueDate') return a.dueDate.localeCompare(b.dueDate);
+          if (sort === 'priority') return a.priority - b.priority;
+          return a.orderNumber.localeCompare(b.orderNumber);
+        });
+        const area = $('listArea');
+        if (list.length === 0) {
+          area.innerHTML = '<div class="state"><span class="state-icon">📋</span>沒有符合條件的訂單。</div>';
+          return;
+        }
+        const rows = list
+          .map((o) => {
+            const prod = o.product ? `${o.product.productCode} ${o.product.productName}` : o.productId;
+            const pr = o.priority <= 2
+              ? `<span class="badge badge-red">${priorityText[o.priority]}</span>`
+              : priorityText[o.priority];
+            const st = o.status === 'scheduled'
+              ? '<span class="badge badge-green">已排程</span>'
+              : '<span class="badge badge-amber">尚未排程</span>';
+            const note = o.notes ? ` <span title="${escapeHtml(o.notes)}">📝</span>` : '';
+            return `<tr>
+              <td class="nowrap"><b>${escapeHtml(o.orderNumber)}</b>${note}</td>
+              <td>${escapeHtml(prod)}</td>
+              <td class="num">${o.quantity}</td>
+              <td class="nowrap muted">${fmtDateTime(o.releaseTime)}</td>
+              <td class="nowrap">${fmtDateTime(o.dueDate)}</td>
+              <td class="nowrap">${fmtMinutes(o.processingTime)}</td>
+              <td>${pr}</td>
+              <td>${st}</td>
+              <td class="actions">
+                <button class="btn btn-ghost btn-sm" data-edit="${o.id}">編輯</button>
+                <button class="btn btn-ghost btn-sm" data-dup="${o.id}">複製</button>
+                <button class="btn btn-ghost btn-sm" data-del="${o.id}">刪除</button>
+              </td></tr>`;
+          })
+          .join('');
+        area.innerHTML = `<div class="table-wrap"><table class="table">
+          <thead><tr>
+            <th>訂單編號</th><th>產品</th><th class="num">數量</th><th>可開始時間</th>
+            <th>交期</th><th>加工時間</th><th>優先級</th><th>狀態</th><th class="right">操作</th>
+          </tr></thead><tbody>${rows}</tbody></table></div>`;
+      }
+
+      // ====== 事件委派(列表操作)======
+      $('listArea').addEventListener('click', async (e) => {
+        const t = e.target;
+        if (t.dataset.edit) openForm(orders.find((o) => o.id === t.dataset.edit));
+        else if (t.dataset.dup) {
+          try {
+            await api(`/orders/${t.dataset.dup}/duplicate`, { method: 'POST' });
+            toast('已複製訂單', 'success');
+            loadOrders();
+          } catch (err) { toast(err.message, 'error'); }
+        } else if (t.dataset.del) {
+          const o = orders.find((x) => x.id === t.dataset.del);
+          if (confirm(`確定刪除訂單「${o.orderNumber}」?此操作無法復原。`)) {
+            try {
+              await api(`/orders/${t.dataset.del}`, { method: 'DELETE' });
+              toast('已刪除', 'success');
+              loadOrders();
+            } catch (err) { toast(err.message, 'error'); }
+          }
+        }
+      });
+
+      // 篩選即時更新
+      ['fSearch', 'fProduct', 'fStatus'].forEach((id) => $(id).addEventListener('input', loadOrders));
+      $('fSort').addEventListener('change', render);
+
+      // ====== 表單 ======
+      function openForm(order) {
+        editingId = order ? order.id : null;
+        $('formTitle').textContent = order ? '編輯訂單' : '新增訂單';
+        $('formError').innerHTML = '';
+        const now = new Date();
+        const in3 = new Date(now.getTime() + 3 * 86400000);
+        $('fldNumber').value = order ? order.orderNumber : 'PO-';
+        $('fldProduct').value = order ? order.productId : products[0]?.id || '';
+        $('fldQty').value = order ? order.quantity : 10;
+        $('fldPt').value = order ? order.processingTime : '';
+        $('fldRelease').value = toLocalInput(order ? order.releaseTime : now);
+        $('fldDue').value = toLocalInput(order ? order.dueDate : in3);
+        $('fldPriority').value = order ? order.priority : 3;
+        $('fldStatus').value = order ? order.status : 'pending';
+        $('fldNotes').value = order ? order.notes || '' : '';
+        renderMachineChecks(order ? order.eligibleMachineIds : []);
+        updatePtHint();
+        $('formModal').hidden = false;
+      }
+
+      function renderMachineChecks(selected) {
+        const pid = $('fldProduct').value;
+        const usable = machines.filter((m) => m.supportedProductIds.includes(pid));
+        if (usable.length === 0) {
+          $('fldMachines').innerHTML = '<span class="small" style="color:var(--warning)">⚠️ 尚無機台支援此產品,排程時會被擋下</span>';
+          return;
+        }
+        $('fldMachines').innerHTML = usable
+          .map((m) => `<label class="check"><input type="checkbox" value="${m.id}" ${selected.includes(m.id) ? 'checked' : ''}/> ${escapeHtml(m.machineCode)}</label>`)
+          .join('');
+      }
+
+      function updatePtHint() {
+        const p = products.find((x) => x.id === $('fldProduct').value);
+        if (p && !$('fldPt').value) {
+          const est = Number($('fldQty').value || 0) * p.defaultProcessingTime;
+          $('ptHint').textContent = `留空自動計算:${$('fldQty').value} × ${p.defaultProcessingTime} = ${est} 分鐘`;
+        } else $('ptHint').textContent = '';
+      }
+      $('fldProduct').addEventListener('change', () => { renderMachineChecks([]); updatePtHint(); });
+      $('fldQty').addEventListener('input', updatePtHint);
+      $('fldPt').addEventListener('input', updatePtHint);
+
+      $('btnSave').addEventListener('click', async () => {
+        $('formError').innerHTML = '';
+        const eligible = [...$('fldMachines').querySelectorAll('input:checked')].map((c) => c.value);
+        const body = {
+          orderNumber: $('fldNumber').value.trim(),
+          productId: $('fldProduct').value,
+          quantity: Number($('fldQty').value),
+          releaseTime: fromLocalInput($('fldRelease').value),
+          dueDate: fromLocalInput($('fldDue').value),
+          processingTime: $('fldPt').value ? Number($('fldPt').value) : null,
+          priority: Number($('fldPriority').value),
+          eligibleMachineIds: eligible,
+          notes: $('fldNotes').value.trim() || null,
+          status: $('fldStatus').value,
+        };
+        try {
+          if (editingId) await api(`/orders/${editingId}`, { method: 'PUT', body });
+          else await api('/orders', { method: 'POST', body });
+          $('formModal').hidden = true;
+          toast('已儲存', 'success');
+          loadOrders();
+        } catch (err) {
+          $('formError').innerHTML = `<div class="banner banner-error">${escapeHtml(err.message)}</div>`;
+        }
+      });
+
+      // ====== CSV ======
+      $('btnDoImport').addEventListener('click', async () => {
+        try {
+          const r = await api('/orders/import', { method: 'POST', body: { csv: $('csvText').value } });
+          const fails = r.results.filter((x) => !x.ok);
+          $('csvResult').innerHTML =
+            `<div class="banner ${r.failed === 0 ? 'banner-success' : 'banner-warn'}">成功 ${r.imported} 筆,失敗 ${r.failed} 筆</div>` +
+            fails.map((f) => `<p class="small" style="color:var(--danger)">第 ${f.line} 列(${escapeHtml(f.orderNumber || '無編號')}):${escapeHtml(f.error)}</p>`).join('');
+          loadOrders();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+
+      // ====== 對話框開關 ======
+      $('btnAdd').addEventListener('click', () => { if (products.length === 0) return toast('請先建立產品', 'warn'); openForm(null); });
+      $('btnImport').addEventListener('click', () => { $('csvResult').innerHTML = ''; $('csvModal').hidden = false; });
+      document.querySelectorAll('[data-close]').forEach((b) =>
+        b.addEventListener('click', (e) => { e.target.closest('.modal-overlay').hidden = true; }));
+
+      // ====== 啟動 ======
+      (async () => {
+        if (!(await checkBackend())) { $('listArea').innerHTML = ''; return; }
+        try { await loadAll(); }
+        catch (e) { $('listArea').innerHTML = `<div class="banner banner-error">${escapeHtml(e.message)}</div>`; }
+      })();
+    </script>
+  </body>
+</html>
