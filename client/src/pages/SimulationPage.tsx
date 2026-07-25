@@ -435,6 +435,20 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
   );
 }
 
+function fmtTardinessChange(oldMin: number, newMin: number) {
+  if (oldMin === 0 && newMin === 0) {
+    return <span className="text-green-700">沒有逾期</span>;
+  }
+  const oldText = oldMin === 0 ? '無延遲' : `${oldMin} 分`;
+  const newText = newMin === 0 ? '無延遲' : `${newMin} 分`;
+  const colorClass = newMin > oldMin ? 'text-red-600' : 'text-green-700';
+  return (
+    <span>
+      {oldText} → <span className={colorClass}>{newText}</span>
+    </span>
+  );
+}
+
 function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
   return (
     <table className="impact-table mt-1 w-full text-xs">
@@ -456,7 +470,7 @@ function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
               {i.oldCompletion ? fmtDateTime(i.oldCompletion) : '—'} → {i.newCompletion ? fmtDateTime(i.newCompletion) : '未排入'}
             </td>
             <td className="py-0.5">
-              {i.oldTardinessMinutes} 分 → <span className={i.newTardinessMinutes > i.oldTardinessMinutes ? 'text-red-600' : 'text-green-700'}>{i.newTardinessMinutes} 分</span>
+              {fmtTardinessChange(i.oldTardinessMinutes, i.newTardinessMinutes)}
             </td>
           </tr>
         ))}
