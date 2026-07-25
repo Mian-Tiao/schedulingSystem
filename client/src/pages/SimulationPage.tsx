@@ -455,7 +455,7 @@ function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
       <thead>
         <tr className="text-left text-slate-400">
           <th className="py-1">訂單</th>
-          <th className="py-1">完成時間變化</th>
+          <th className="py-1">完成時間</th>
           <th className="py-1">延遲變化</th>
         </tr>
       </thead>
