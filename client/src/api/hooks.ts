@@ -1,6 +1,7 @@
 /** TanStack Query hooks:所有 API 資料存取集中於此 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BomItem,
   ChangeoverRule,
   Dashboard,
   Downtime,
@@ -152,3 +153,33 @@ export const useDashboard = () =>
 // ---- AI ----
 export const useAiStatus = () =>
   useQuery({ queryKey: ['ai-status'], queryFn: () => apiGet<{ enabled: boolean }>('/api/ai/status') });
+
+// ---- BOM ----
+export const useBom = (productId: string | null) =>
+  useQuery({
+    queryKey: ['bom', productId],
+    queryFn: () => apiGet<BomItem[]>(`/api/products/${productId}/bom`),
+    enabled: Boolean(productId),
+  });
+
+export function useBomMutations(productId: string | null) {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['bom', productId] });
+  return {
+    create: useMutation({
+      mutationFn: (body: Omit<BomItem, 'id' | 'productId'>) =>
+        apiPost<BomItem>(`/api/products/${productId}/bom`, body),
+      onSuccess: invalidate,
+    }),
+    update: useMutation({
+      mutationFn: ({ id, ...body }: Omit<BomItem, 'productId'>) =>
+        apiPut<BomItem>(`/api/products/${productId}/bom/${id}`, body),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => apiDelete(`/api/products/${productId}/bom/${id}`),
+      onSuccess: invalidate,
+    }),
+  };
+}
+

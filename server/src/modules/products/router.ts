@@ -60,3 +60,88 @@ productsRouter.delete(
     res.status(204).end();
   }),
 );
+
+// ---- BOM 表管理 ----
+
+const bomItemSchema = z.object({
+  materialName: z.string().min(1, '原料名稱為必填'),
+  unit: z.string().min(1, '用量單位為必填'),
+  quantity: z.number().positive('用量必須大於零'),
+  customFields: z.record(z.string()).default({}),
+});
+
+function serializeBom(data: z.infer<typeof bomItemSchema> & { productId: string }) {
+  return {
+    productId: data.productId,
+    materialName: data.materialName,
+    unit: data.unit,
+    quantity: data.quantity,
+    customFields: JSON.stringify(data.customFields),
+  };
+}
+
+function deserializeBom<T extends { customFields: string }>(b: T) {
+  return {
+    ...b,
+    customFields: JSON.parse(b.customFields) as Record<string, string>,
+  };
+}
+
+productsRouter.get(
+  '/:productId/bom',
+  wrap(async (req, res) => {
+    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    if (!product) throw notFound('產品');
+    const bomItems = await prisma.bomItem.findMany({
+      where: { productId: req.params.productId },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(bomItems.map(deserializeBom));
+  }),
+);
+
+productsRouter.post(
+  '/:productId/bom',
+  wrap(async (req, res) => {
+    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    if (!product) throw notFound('產品');
+    const data = bomItemSchema.parse(req.body);
+    const created = await prisma.bomItem.create({
+      data: serializeBom({ ...data, productId: req.params.productId }),
+    });
+    res.status(201).json(deserializeBom(created));
+  }),
+);
+
+productsRouter.put(
+  '/:productId/bom/:id',
+  wrap(async (req, res) => {
+    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    if (!product) throw notFound('產品');
+    const found = await prisma.bomItem.findFirst({
+      where: { id: req.params.id, productId: req.params.productId },
+    });
+    if (!found) throw notFound('BOM 項目');
+    const data = bomItemSchema.parse(req.body);
+    const updated = await prisma.bomItem.update({
+      where: { id: req.params.id },
+      data: serializeBom({ ...data, productId: req.params.productId }),
+    });
+    res.json(deserializeBom(updated));
+  }),
+);
+
+productsRouter.delete(
+  '/:productId/bom/:id',
+  wrap(async (req, res) => {
+    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    if (!product) throw notFound('產品');
+    const found = await prisma.bomItem.findFirst({
+      where: { id: req.params.id, productId: req.params.productId },
+    });
+    if (!found) throw notFound('BOM 項目');
+    await prisma.bomItem.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  }),
+);
+

@@ -23,6 +23,7 @@ model Product {
   updatedAt             DateTime @updatedAt
 
   orders ProductionOrder[]
+  bomItems BomItem[]
 }
 
 model Machine {
@@ -122,3 +123,17 @@ model ScheduledTask {
 
   scenario ScheduleScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
 }
+
+model BomItem {
+  id           String   @id @default(cuid())
+  productId    String
+  materialName String
+  unit         String
+  quantity     Float
+  customFields String   @default("{}") // JSON string: {"specification": "10mm", "supplier": "Supplier A"}
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
