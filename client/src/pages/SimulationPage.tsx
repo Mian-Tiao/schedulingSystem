@@ -293,6 +293,18 @@ export function SimulationPage() {
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">沒有訂單受影響。</p>
                 )}
+                {urgentResult.rebuild.unscheduled && urgentResult.rebuild.unscheduled.length > 0 && (
+                  <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                    <p className="font-semibold">⚠️ 以下訂單因產能不足未能排入：</p>
+                    <ul className="list-disc pl-4 mt-1">
+                      {urgentResult.rebuild.unscheduled.map((u) => (
+                        <li key={u.orderNumber}>
+                          {u.orderNumber}: {u.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <GanttPreview
                   tasks={urgentResult.rebuild.tasks}
                   breakdown={null}
