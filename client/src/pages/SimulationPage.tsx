@@ -1,13 +1,12 @@
 /**
  * 情境模擬:急單插入、機台故障。純模擬,不寫入正式排程。
  */
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { ApiError, apiPost } from '../api/client';
 import { useMachines, useProducts, useScenarios } from '../api/hooks';
 import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading, PageHeader, PageMetrics } from '../components/ui';
-import type { Machine, Metrics, OrderImpact, Task } from '../types';
-import { fmtDateTime, fmtMinutes, fmtTime, fromLocalInput, pct, toLocalInput } from '../utils/time';
+import type { Metrics, OrderImpact } from '../types';
+import { fmtDateTime, fmtMinutes, fromLocalInput, pct, toLocalInput } from '../utils/time';
 
 type Tab = 'urgent' | 'breakdown';
 
@@ -15,11 +14,10 @@ interface UrgentResult {
   baseline: { metrics: Metrics };
   urgentOrder: { orderNumber: string; processingTime: number };
   insert:
-    | { ok: true; tasks: Task[]; metrics: Metrics; urgentTardinessMinutes: number | null; affectedOrders: OrderImpact[] }
+    | { ok: true; metrics: Metrics; urgentTardinessMinutes: number | null; affectedOrders: OrderImpact[] }
     | { ok: false; reason: string };
   rebuild: {
     ok: boolean;
-    tasks: Task[];
     metrics: Metrics;
     urgentTardinessMinutes: number | null;
     affectedOrders: OrderImpact[];
@@ -29,10 +27,9 @@ interface UrgentResult {
 
 interface BreakdownResult {
   baseline: { metrics: Metrics };
-  breakdown: { machineId: string; machineName: string; startTime: string; estimatedRepairTime: string };
+  breakdown: { machineName: string; startTime: string; estimatedRepairTime: string };
   withEstimatedRepair: {
     metrics: Metrics;
-    tasks: Task[];
     impacts: OrderImpact[];
     lateOrders: { orderNumber: string; tardinessMinutes: number; priority: number }[];
     lateOrderCount: number;
@@ -40,7 +37,7 @@ interface BreakdownResult {
   reverseAnalysis: { latestSafeRepairTime: string | null; message: string };
   suggestions: {
     minimumLateOrderCount: number;
-    transferMachines: { machineId: string; machineCode: string; machineName: string }[];
+    transferMachines: { machineCode: string; machineName: string }[];
     priorityOrders: string[];
     negotiableOrders: string[];
   };
@@ -53,38 +50,6 @@ export function SimulationPage() {
   const [tab, setTab] = useState<Tab>('urgent');
   const top = scenarios?.find((s) => s.rank === 1) ?? null;
 
-  const navigate = useNavigate();
-  const [applyBusy, setApplyBusy] = useState<string | null>(null);
-
-  const handleApplyUrgent = async (strategy: 'insert' | 'rebuild') => {
-    setApplyBusy(strategy);
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      if (strategy === 'insert') {
-        alert('急單插入策略套用成功！(模擬)');
-      } else {
-        alert('急單重排策略套用成功！(模擬)');
-      }
-      navigate('/gantt');
-    } catch {
-      alert('套用失敗，請重試');
-    } finally {
-      setApplyBusy(null);
-    }
-  };
-
-  const handleApplyBreakdown = async () => {
-    setApplyBusy('breakdown');
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      alert('故障排程套用成功！(模擬)');
-      navigate('/gantt');
-    } catch {
-      alert('套用失敗，請重試');
-    } finally {
-      setApplyBusy(null);
-    }
-  };
   const [urgentForm, setUrgentForm] = useState({
     orderNumber: 'URGENT-001',
     productId: '',
@@ -255,20 +220,6 @@ export function SimulationPage() {
                       )}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">此策略不影響任何既有訂單。</p>
-                    <GanttPreview
-                      tasks={urgentResult.insert.tasks}
-                      breakdown={null}
-                      machines={machines ?? []}
-                    />
-                    <div className="mt-3">
-                      <Button
-                        variant="primary"
-                        onClick={() => handleApplyUrgent('insert')}
-                        disabled={applyBusy !== null}
-                      >
-                        {applyBusy === 'insert' ? '套用中…' : '套用此策略'}
-                      </Button>
-                    </div>
                   </>
                 ) : (
                   <Banner tone="error">{urgentResult.insert.reason}</Banner>
@@ -293,32 +244,6 @@ export function SimulationPage() {
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">沒有訂單受影響。</p>
                 )}
-                {urgentResult.rebuild.unscheduled && urgentResult.rebuild.unscheduled.length > 0 && (
-                  <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-                    <p className="font-semibold">⚠️ 以下訂單因產能不足未能排入：</p>
-                    <ul className="list-disc pl-4 mt-1">
-                      {urgentResult.rebuild.unscheduled.map((u) => (
-                        <li key={u.orderNumber}>
-                          {u.orderNumber}: {u.reason}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <GanttPreview
-                  tasks={urgentResult.rebuild.tasks}
-                  breakdown={null}
-                  machines={machines ?? []}
-                />
-                <div className="mt-3">
-                  <Button
-                    variant="primary"
-                    onClick={() => handleApplyUrgent('rebuild')}
-                    disabled={applyBusy !== null}
-                  >
-                    {applyBusy === 'rebuild' ? '套用中…' : '套用此策略'}
-                  </Button>
-                </div>
               </div>
             </div>
           )}
@@ -346,23 +271,7 @@ export function SimulationPage() {
               </select>
             </Field>
             <Field label="故障開始時間" required>
-              <input
-                type="datetime-local"
-                className={inputCls}
-                value={bdForm.startTime}
-                onChange={(e) => {
-                  const newStart = e.target.value;
-                  let newRepair = bdForm.estimatedRepairTime;
-                  if (newStart) {
-                    const startDate = new Date(newStart);
-                    if (!isNaN(startDate.getTime())) {
-                      const repairDate = new Date(startDate.getTime() + 4 * 60 * 60 * 1000); // 預設加 4 小時
-                      newRepair = toLocalInput(repairDate);
-                    }
-                  }
-                  setBdForm({ ...bdForm, startTime: newStart, estimatedRepairTime: newRepair });
-                }}
-              />
+              <input type="datetime-local" className={inputCls} value={bdForm.startTime} onChange={(e) => setBdForm({ ...bdForm, startTime: e.target.value })} />
             </Field>
             <Field label="預估修復時間" required>
               <input type="datetime-local" className={inputCls} value={bdForm.estimatedRepairTime} onChange={(e) => setBdForm({ ...bdForm, estimatedRepairTime: e.target.value })} />
@@ -415,18 +324,9 @@ export function SimulationPage() {
                     <li>・最少會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
                     <li>
                       ・可考慮轉移工作到:
-                      {(() => {
-                        const brokenMachine = machines?.find((m) => m.id === bdForm.machineId);
-                        const compatible = bdResult.suggestions.transferMachines.filter((tm) => {
-                          const machineInfo = machines?.find((m) => m.id === tm.machineId);
-                          return machineInfo?.supportedProductIds.some((pId) =>
-                            brokenMachine?.supportedProductIds.includes(pId)
-                          );
-                        });
-                        return compatible.length > 0
-                          ? compatible.map((m) => `${m.machineCode} ${m.machineName}`).join('、')
-                          : '(沒有其他相容機台可支援)';
-                      })()}
+                      {bdResult.suggestions.transferMachines.length > 0
+                        ? bdResult.suggestions.transferMachines.map((m) => `${m.machineCode} ${m.machineName}`).join('、')
+                        : '(沒有其他機台可支援)'}
                     </li>
                     {bdResult.suggestions.priorityOrders.length > 0 && (
                       <li>・建議優先處理:{bdResult.suggestions.priorityOrders.join('、')}</li>
@@ -437,21 +337,6 @@ export function SimulationPage() {
                   </ul>
                 </div>
               )}
-
-              <GanttPreview
-                tasks={bdResult.withEstimatedRepair.tasks}
-                breakdown={bdResult.breakdown}
-                machines={machines ?? []}
-              />
-              <div className="mt-3">
-                <Button
-                  variant="primary"
-                  onClick={handleApplyBreakdown}
-                  disabled={applyBusy !== null}
-                >
-                  {applyBusy === 'breakdown' ? '套用中…' : '套用故障調整'}
-                </Button>
-              </div>
             </div>
           )}
         </section>
@@ -465,7 +350,7 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
     { label: '準時交貨率', b: pct(before.onTimeDeliveryRate), a: pct(after.onTimeDeliveryRate), good: after.onTimeDeliveryRate >= before.onTimeDeliveryRate },
     { label: '平均延遲', b: fmtMinutes(before.averageTardinessMinutes), a: fmtMinutes(after.averageTardinessMinutes), good: after.averageTardinessMinutes <= before.averageTardinessMinutes },
     { label: '延遲訂單', b: `${before.lateOrderCount} 張`, a: `${after.lateOrderCount} 張`, good: after.lateOrderCount <= before.lateOrderCount },
-    { label: '總生產工期', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
+    { label: 'Makespan', b: fmtMinutes(before.makespanMinutes), a: fmtMinutes(after.makespanMinutes), good: after.makespanMinutes <= before.makespanMinutes },
   ];
   return (
     <table className="metric-compare-table w-full text-sm">
@@ -489,27 +374,13 @@ function MetricsCompare({ before, after }: { before: Metrics; after: Metrics }) 
   );
 }
 
-function fmtTardinessChange(oldMin: number, newMin: number) {
-  if (oldMin === 0 && newMin === 0) {
-    return <span className="text-green-700">沒有逾期</span>;
-  }
-  const oldText = oldMin === 0 ? '無延遲' : `${oldMin} 分`;
-  const newText = newMin === 0 ? '無延遲' : `${newMin} 分`;
-  const colorClass = newMin > oldMin ? 'text-red-600' : 'text-green-700';
-  return (
-    <span>
-      {oldText} → <span className={colorClass}>{newText}</span>
-    </span>
-  );
-}
-
 function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
   return (
     <table className="impact-table mt-1 w-full text-xs">
       <thead>
         <tr className="text-left text-slate-400">
           <th className="py-1">訂單</th>
-          <th className="py-1">完成時間</th>
+          <th className="py-1">完成時間變化</th>
           <th className="py-1">延遲變化</th>
         </tr>
       </thead>
@@ -524,205 +395,11 @@ function ImpactTable({ impacts }: { impacts: OrderImpact[] }) {
               {i.oldCompletion ? fmtDateTime(i.oldCompletion) : '—'} → {i.newCompletion ? fmtDateTime(i.newCompletion) : '未排入'}
             </td>
             <td className="py-0.5">
-              {fmtTardinessChange(i.oldTardinessMinutes, i.newTardinessMinutes)}
+              {i.oldTardinessMinutes} 分 → <span className={i.newTardinessMinutes > i.oldTardinessMinutes ? 'text-red-600' : 'text-green-700'}>{i.newTardinessMinutes} 分</span>
             </td>
           </tr>
         ))}
       </tbody>
     </table>
-  );
-}
-
-const TASK_TYPE_LABELS: Record<string, string> = {
-  production: '生產',
-  setup: '換線',
-  cleaning: '清洗',
-  maintenance: '維保',
-};
-
-function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown: { machineId: string; startTime: string; estimatedRepairTime: string } | null; machines: Machine[] }) {
-  const timeRange = useMemo(() => {
-    if (tasks.length === 0) return null;
-    let min = Infinity;
-    let max = -Infinity;
-    for (const t of tasks) {
-      min = Math.min(min, Date.parse(t.startTime));
-      max = Math.max(max, Date.parse(t.endTime));
-    }
-    if (breakdown) {
-      min = Math.min(min, Date.parse(breakdown.startTime));
-      max = Math.max(max, Date.parse(breakdown.estimatedRepairTime));
-    }
-    min -= 2 * 3600_000;
-    max += 2 * 3600_000;
-    return { start: min, end: max };
-  }, [tasks, breakdown]);
-
-  const pxPerMin = 0.22;
-  const rowHeight = 36;
-  const labelWidth = 100;
-
-  const sortedMachines = useMemo(() => {
-    return [...(machines ?? [])].sort((a, b) => a.machineCode.localeCompare(b.machineCode));
-  }, [machines]);
-
-  const xOf = (timeStr: string) => {
-    if (!timeRange) return 0;
-    const t = Date.parse(timeStr);
-    return ((t - timeRange.start) / 60_000) * pxPerMin;
-  };
-
-  const wOf = (startTimeStr: string, endTimeStr: string) => {
-    const s = Date.parse(startTimeStr);
-    const e = Date.parse(endTimeStr);
-    return ((e - s) / 60_000) * pxPerMin;
-  };
-
-  const ticks = useMemo(() => {
-    if (!timeRange) return [];
-    const arr = [];
-    const startHour = new Date(timeRange.start);
-    startHour.setMinutes(0, 0, 0);
-    let current = startHour.getTime();
-    while (current < timeRange.end) {
-      arr.push(current);
-      current += 12 * 3600_000;
-    }
-    return arr;
-  }, [timeRange]);
-
-  if (!timeRange) return null;
-
-  const totalWidth = ((timeRange.end - timeRange.start) / 60_000) * pxPerMin;
-
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mt-4">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-700">⚙️ 預估調整後甘特圖預覽</span>
-        <div className="flex gap-3 text-[10px] text-slate-500">
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>生產
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 bg-yellow-500 rounded-sm"></span>換線
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm"></span>清洗
-          </span>
-          <span className="flex items-center gap-1">
-            <span
-              className="w-2.5 h-2.5 rounded-sm"
-              style={{
-                background: 'repeating-linear-gradient(45deg, #ef4444, #ef4444 2px, #fca5a5 2px, #fca5a5 4px)',
-              }}
-            ></span>
-            機台故障
-          </span>
-        </div>
-      </div>
-
-      <div className="relative border border-slate-200 bg-white rounded overflow-hidden flex flex-col">
-        {/* Single Scrollable Container */}
-        <div className="overflow-x-auto max-w-full">
-          <div style={{ width: labelWidth + totalWidth }} className="flex flex-col">
-            {/* Timeline Header */}
-            <div className="flex border-b border-slate-200 bg-slate-100" style={{ height: 24 }}>
-              <div
-                className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 px-2 flex items-center text-[10px] font-semibold text-slate-500"
-                style={{ width: labelWidth }}
-              >
-                機台
-              </div>
-              <div className="relative flex-1" style={{ height: 24, width: totalWidth }}>
-                {ticks.map((t: number) => (
-                  <div
-                    key={t}
-                    className="absolute text-[9px] text-slate-400 border-l border-slate-200 pl-1"
-                    style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin, top: 4 }}
-                  >
-                    {new Intl.DateTimeFormat('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).format(new Date(t))}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Machine Rows */}
-            {sortedMachines.map((m: Machine) => (
-              <div key={m.id} className="flex border-b border-slate-100 last:border-b-0" style={{ height: rowHeight }}>
-                {/* Machine Code */}
-                <div
-                  className="sticky left-0 z-10 bg-white border-r border-slate-200 px-2 flex items-center text-xs font-medium text-slate-700"
-                  style={{ width: labelWidth }}
-                >
-                  {m.machineCode}
-                </div>
-
-                {/* Timeline row */}
-                <div className="relative flex-1" style={{ height: rowHeight, width: totalWidth }}>
-                  {ticks.map((t: number) => (
-                    <div
-                      key={t}
-                      className="absolute inset-y-0 w-px bg-slate-50"
-                      style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin }}
-                    />
-                  ))}
-
-                  {/* Tasks */}
-                  {tasks
-                    .filter((t: Task) => t.machineId === m.id)
-                    .map((t: Task) => {
-                      const left = xOf(t.startTime);
-                      const width = Math.max(2, wOf(t.startTime, t.endTime));
-                      const isProduction = t.taskType === 'production';
-                      const taskName = t.taskId.includes('-production')
-                        ? t.taskId.split('-')[2] || t.taskId.split('-')[1]
-                        : t.taskId.split('-')[1] || t.taskId.split('-')[0];
-                      const taskStyle: React.CSSProperties = {
-                        left,
-                        width,
-                        top: 5,
-                        height: rowHeight - 10,
-                        backgroundColor:
-                          t.taskType === 'production'
-                            ? '#3b82f6'
-                            : t.taskType === 'setup'
-                              ? '#eab308'
-                              : t.taskType === 'cleaning'
-                                ? '#10b981'
-                                : '#6b7280',
-                      };
-                      return (
-                        <div
-                          key={t.taskId}
-                          className="absolute rounded-sm text-[9px] text-white overflow-hidden flex items-center px-1 font-semibold"
-                          style={taskStyle}
-                          title={`${isProduction ? '生產 ' + taskName : TASK_TYPE_LABELS[t.taskType] ?? t.taskType} (${fmtTime(t.startTime)}-${fmtTime(t.endTime)})`}
-                        >
-                          <span className="truncate">{isProduction ? taskName : ''}</span>
-                        </div>
-                      );
-                    })}
-
-                  {/* Breakdown Overlay */}
-                  {breakdown && breakdown.machineId === m.id && (
-                    <div
-                      className="absolute rounded-sm border border-red-500"
-                      style={{
-                        left: xOf(breakdown.startTime),
-                        width: wOf(breakdown.startTime, breakdown.estimatedRepairTime),
-                        top: 4,
-                        height: rowHeight - 8,
-                        background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 4px, rgba(254,226,226,0.6) 4px, rgba(254,226,226,0.6) 8px)',
-                      }}
-                      title={`故障時間: ${fmtDateTime(breakdown.startTime)} - ${fmtDateTime(breakdown.estimatedRepairTime)}`}
-                    />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
