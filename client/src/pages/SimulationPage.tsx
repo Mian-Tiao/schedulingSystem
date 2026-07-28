@@ -599,32 +599,31 @@ function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown
       </div>
 
       <div className="relative border border-slate-200 bg-white rounded overflow-hidden flex flex-col">
-        {/* Timeline Header */}
-        <div className="flex border-b border-slate-200 bg-slate-100" style={{ height: 24 }}>
-          <div
-            className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 px-2 flex items-center text-[10px] font-semibold text-slate-500"
-            style={{ width: labelWidth }}
-          >
-            機台
-          </div>
-          <div className="relative flex-1 overflow-hidden" style={{ height: 24 }}>
-            <div style={{ width: totalWidth, height: 24, position: 'relative' }}>
-              {ticks.map((t: number) => (
-                <div
-                  key={t}
-                  className="absolute text-[9px] text-slate-400 border-l border-slate-200 pl-1"
-                  style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin, top: 4 }}
-                >
-                  {new Intl.DateTimeFormat('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).format(new Date(t))}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Scrollable Rows */}
+        {/* Single Scrollable Container */}
         <div className="overflow-x-auto max-w-full">
           <div style={{ width: labelWidth + totalWidth }} className="flex flex-col">
+            {/* Timeline Header */}
+            <div className="flex border-b border-slate-200 bg-slate-100" style={{ height: 24 }}>
+              <div
+                className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 px-2 flex items-center text-[10px] font-semibold text-slate-500"
+                style={{ width: labelWidth }}
+              >
+                機台
+              </div>
+              <div className="relative flex-1" style={{ height: 24, width: totalWidth }}>
+                {ticks.map((t: number) => (
+                  <div
+                    key={t}
+                    className="absolute text-[9px] text-slate-400 border-l border-slate-200 pl-1"
+                    style={{ left: ((t - timeRange.start) / 60_000) * pxPerMin, top: 4 }}
+                  >
+                    {new Intl.DateTimeFormat('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).format(new Date(t))}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Machine Rows */}
             {sortedMachines.map((m: Machine) => (
               <div key={m.id} className="flex border-b border-slate-100 last:border-b-0" style={{ height: rowHeight }}>
                 {/* Machine Code */}
