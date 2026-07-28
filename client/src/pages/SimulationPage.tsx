@@ -15,10 +15,11 @@ interface UrgentResult {
   baseline: { metrics: Metrics };
   urgentOrder: { orderNumber: string; processingTime: number };
   insert:
-    | { ok: true; metrics: Metrics; urgentTardinessMinutes: number | null; affectedOrders: OrderImpact[] }
+    | { ok: true; tasks: Task[]; metrics: Metrics; urgentTardinessMinutes: number | null; affectedOrders: OrderImpact[] }
     | { ok: false; reason: string };
   rebuild: {
     ok: boolean;
+    tasks: Task[];
     metrics: Metrics;
     urgentTardinessMinutes: number | null;
     affectedOrders: OrderImpact[];
@@ -254,6 +255,11 @@ export function SimulationPage() {
                       )}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">此策略不影響任何既有訂單。</p>
+                    <GanttPreview
+                      tasks={urgentResult.insert.tasks}
+                      breakdown={null}
+                      machines={machines ?? []}
+                    />
                     <div className="mt-3">
                       <Button
                         variant="primary"
@@ -287,6 +293,11 @@ export function SimulationPage() {
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">沒有訂單受影響。</p>
                 )}
+                <GanttPreview
+                  tasks={urgentResult.rebuild.tasks}
+                  breakdown={null}
+                  machines={machines ?? []}
+                />
                 <div className="mt-3">
                   <Button
                     variant="primary"
@@ -517,7 +528,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   maintenance: '維保',
 };
 
-function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown: { machineId: string; startTime: string; estimatedRepairTime: string }; machines: Machine[] }) {
+function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown: { machineId: string; startTime: string; estimatedRepairTime: string } | null; machines: Machine[] }) {
   const timeRange = useMemo(() => {
     if (tasks.length === 0) return null;
     let min = Infinity;
