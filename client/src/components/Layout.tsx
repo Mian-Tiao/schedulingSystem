@@ -37,7 +37,7 @@ export function Layout() {
           ))}
         </nav>
       </aside>
-      <main className="ml-52 flex-1 p-6">
+      <main className="ml-52 min-w-0 flex-1 p-6">
         <Outlet />
       </main>
     </div>

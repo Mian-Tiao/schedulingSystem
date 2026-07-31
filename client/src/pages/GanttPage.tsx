@@ -16,15 +16,15 @@ import type { Machine, Metrics, Task } from '../types';
 import { TASK_TYPE_LABELS } from '../types';
 import { fmtDateTime, fmtMinutes, fmtTime, pct } from '../utils/time';
 
-const ROW_H = 46;
-const HEADER_H = 44;
-const LABEL_W = 150;
+const ROW_H = 72;
+const HEADER_H = 48;
+const LABEL_W = 176;
 const SNAP_MIN = 15;
 
 const SCALES = [
   { id: 'hour', label: '小時', pxPerMin: 1.6 },
-  { id: 'shift', label: '班次', pxPerMin: 0.55 },
-  { id: 'day', label: '日', pxPerMin: 0.16 },
+  { id: 'shift', label: '班次', pxPerMin: 0.72 },
+  { id: 'day', label: '日', pxPerMin: 0.26 },
 ] as const;
 
 interface DragState {
@@ -55,6 +55,8 @@ export function GanttPage() {
   const [diff, setDiff] = useState<{ before: Metrics; after: Metrics; delays: { orderNumber: string; oldTardinessMinutes: number; newTardinessMinutes: number }[] } | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // scenario 載入後初始化歷史
@@ -68,6 +70,28 @@ export function GanttPage() {
   }, [scenario?.scenarioId, scenario?.generatedAt]);
 
   const tasks = store.currentTasks() ?? scenario?.tasks ?? [];
+
+  // 偵測甘特圖是否還能左右捲動,以顯示/隱藏兩側箭頭與漸層提示
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      setCanLeft(el.scrollLeft > 4);
+      setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      el.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [scaleIdx, zoom, scenarioId, tasks.length]);
+
+  const scrollByDir = (dir: 1 | -1) => {
+    const el = containerRef.current;
+    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.7, behavior: 'smooth' });
+  };
 
   const orderById = useMemo(() => new Map((orders ?? []).map((o) => [o.id, o])), [orders]);
   const productById = useMemo(() => new Map((products ?? []).map((p) => [p.id, p])), [products]);
@@ -256,8 +280,8 @@ export function GanttPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-bold text-slate-800">甘特圖排程</h1>
           <select
             className="rounded-md border border-slate-300 px-2 py-1 text-sm"
@@ -272,52 +296,96 @@ export function GanttPage() {
           </select>
           {scenario.isManuallyAdjusted && <Badge tone="blue">已人工調整</Badge>}
         </div>
-        <div className="flex items-center gap-1.5">
-          {SCALES.map((s, i) => (
-            <Button key={s.id} variant={i === scaleIdx ? 'primary' : 'secondary'} onClick={() => setScaleIdx(i)}>
-              {s.label}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-1.5">
+            <span className="mr-0.5 text-xs text-slate-400">檢視</span>
+            {SCALES.map((s, i) => (
+              <Button key={s.id} variant={i === scaleIdx ? 'primary' : 'secondary'} onClick={() => setScaleIdx(i)}>
+                {s.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="mr-0.5 text-xs text-slate-400">縮放</span>
+            <Button variant="secondary" onClick={() => setZoom((z) => Math.min(4, z * 1.4))} title="放大">
+              🔍+
             </Button>
-          ))}
-          <Button variant="secondary" onClick={() => setZoom((z) => Math.min(4, z * 1.4))} title="放大">
-            🔍+
-          </Button>
-          <Button variant="secondary" onClick={() => setZoom((z) => Math.max(0.3, z / 1.4))} title="縮小">
-            🔍−
-          </Button>
-          <span className="mx-1 h-5 w-px bg-slate-200" />
-          <Button variant="secondary" onClick={doUndo} disabled={!store.canUndo() || busy} title="復原上一步">
-            ↩ 復原
-          </Button>
-          <Button variant="secondary" onClick={doRedo} disabled={!store.canRedo() || busy} title="重做">
-            ↪ 重做
-          </Button>
-          <Button variant="secondary" onClick={doReset} disabled={busy} title="回復系統原始排程">
-            ⟲ 回復原始排程
-          </Button>
+            <Button variant="secondary" onClick={() => setZoom((z) => Math.max(0.3, z / 1.4))} title="縮小">
+              🔍−
+            </Button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="mr-0.5 text-xs text-slate-400">編輯</span>
+            <Button variant="secondary" onClick={doUndo} disabled={!store.canUndo() || busy} title="復原上一步">
+              ↩ 復原
+            </Button>
+            <Button variant="secondary" onClick={doRedo} disabled={!store.canRedo() || busy} title="重做">
+              ↪ 重做
+            </Button>
+            <Button variant="secondary" onClick={doReset} disabled={busy} title="回復系統原始排程">
+              ⟲ 回復原始排程
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-        <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-production" /> 生產</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-setup" /> 換模</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-cleaning" /> 清洗</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border border-slate-400 bg-maintenance bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,255,255,.6)_3px,rgba(255,255,255,.6)_6px)]" /> 維護/停機</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border-2 border-red-500 bg-production" /> 逾期訂單</span>
-        <span className="text-slate-400">|提示:拖曳藍色生產區塊可調整開始時間或換機台(每 {SNAP_MIN} 分鐘吸附);點擊查看詳細。</span>
+      <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 text-sm font-medium text-slate-700">
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded bg-production" /> 生產</span>
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded bg-setup" /> 換模</span>
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded bg-cleaning" /> 清洗</span>
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded border border-slate-400 bg-maintenance bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,255,255,.6)_3px,rgba(255,255,255,.6)_6px)]" /> 維護/停機</span>
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded border-2 border-red-500 bg-production" /> 逾期訂單</span>
+          <span className="flex items-center gap-2"><span className="inline-block h-4 w-4 rounded bg-production ring-2 ring-purple-400" /> 已人工調整</span>
+        </div>
+        <p className="text-sm text-slate-500">
+          💡 拖曳藍色生產區塊可調整開始時間或換機台(每 {SNAP_MIN} 分鐘吸附);點擊區塊查看詳細資訊。
+        </p>
       </div>
 
       {message && <Banner tone={message.tone === 'success' ? 'success' : message.tone}>{message.text}</Banner>}
       {busy && <Banner tone="info">處理中,請稍候…</Banner>}
 
       {/* 甘特圖主體 */}
-      <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {/* 左右捲動提示:漸層 + 箭頭(只在還能捲動時出現) */}
+        {canRight && (
+          <div className="pointer-events-none absolute right-0 top-0 z-10 h-full w-12 bg-gradient-to-l from-white to-transparent" />
+        )}
+        {canLeft && (
+          <div
+            className="pointer-events-none absolute top-0 z-10 h-full w-12 bg-gradient-to-r from-white to-transparent"
+            style={{ left: LABEL_W }}
+          />
+        )}
+        {canLeft && (
+          <button
+            type="button"
+            onClick={() => scrollByDir(-1)}
+            aria-label="向左捲動"
+            className="absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-600 shadow-md transition hover:bg-white hover:text-blue-600"
+            style={{ left: LABEL_W + 6 }}
+          >
+            ‹
+          </button>
+        )}
+        {canRight && (
+          <button
+            type="button"
+            onClick={() => scrollByDir(1)}
+            aria-label="向右捲動,查看後續時間"
+            className="absolute right-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-600 shadow-md transition hover:bg-white hover:text-blue-600"
+          >
+            ›
+          </button>
+        )}
         <div className="overflow-x-auto" ref={containerRef}>
           <div style={{ width: LABEL_W + chartW, minWidth: '100%' }}>
             {/* 時間刻度列 */}
             <div className="relative border-b border-slate-200" style={{ height: HEADER_H, marginLeft: LABEL_W }}>
               {ticks.map((tk, i) => (
                 <div key={i} className="absolute top-0 h-full" style={{ left: tk.x }}>
-                  <span className={`absolute top-2 -translate-x-1/2 whitespace-nowrap text-[10px] ${tk.major ? 'font-semibold text-slate-700' : 'text-slate-400'}`}>
+                  <span className={`absolute top-2.5 -translate-x-1/2 whitespace-nowrap text-[12px] ${tk.major ? 'font-semibold text-slate-700' : 'text-slate-400'}`}>
                     {tk.label}
                   </span>
                   <div className={`absolute bottom-0 h-2 w-px ${tk.major ? 'bg-slate-400' : 'bg-slate-200'}`} />
@@ -329,12 +397,14 @@ export function GanttPage() {
             {machineRows.map((m, ri) => (
               <div key={m.id} className="relative flex border-b border-slate-100" style={{ height: ROW_H }}>
                 <div
-                  className="sticky left-0 z-10 flex shrink-0 items-center gap-1 border-r border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"
+                  className="sticky left-0 z-10 flex shrink-0 flex-col justify-center border-r border-slate-200 bg-white px-3"
                   style={{ width: LABEL_W }}
                 >
-                  {m.machineCode}
-                  <span className="font-normal text-slate-400">{m.machineName}</span>
-                  {m.status === 'disabled' && <Badge tone="slate">停用</Badge>}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base font-semibold text-slate-800">{m.machineCode}</span>
+                    {m.status === 'disabled' && <Badge tone="slate">停用</Badge>}
+                  </div>
+                  <span className="truncate text-sm text-slate-400">{m.machineName}</span>
                 </div>
                 <div className="relative flex-1">
                   {/* 格線 */}
@@ -349,14 +419,15 @@ export function GanttPage() {
                       const order = t.orderId ? orderById.get(t.orderId) : null;
                       const product = order ? productById.get(order.productId) : null;
                       const late = Boolean(order && t.taskType === 'production' && Date.parse(t.endTime) > Date.parse(order.dueDate));
+                      const w = wOf(t);
                       const style: React.CSSProperties = {
                         left: xOf(t.startTime),
-                        width: Math.max(4, wOf(t)),
-                        top: 6,
-                        height: ROW_H - 12,
+                        width: Math.max(6, w),
+                        top: 8,
+                        height: ROW_H - 16,
                         opacity: isDragging ? 0.35 : 1,
                       };
-                      const base = 'absolute rounded-sm text-[10px] leading-tight text-white overflow-hidden select-none';
+                      const base = 'absolute rounded text-white overflow-hidden select-none shadow-sm';
                       const cls =
                         t.taskType === 'production'
                           ? `${base} bg-production cursor-grab active:cursor-grabbing ${late ? 'border-2 border-red-500' : ''} ${t.isManuallyAdjusted ? 'ring-2 ring-purple-400' : ''}`
@@ -370,7 +441,7 @@ export function GanttPage() {
                           key={t.taskId}
                           className={cls}
                           style={style}
-                          title={`${order?.orderNumber ?? TASK_TYPE_LABELS[t.taskType]} ${fmtTime(t.startTime)}-${fmtTime(t.endTime)}`}
+                          title={`${order?.orderNumber ?? TASK_TYPE_LABELS[t.taskType]}${product ? `・${product.productName}` : ''} ${fmtTime(t.startTime)}-${fmtTime(t.endTime)}`}
                           onPointerDown={(e) => onPointerDown(e, t)}
                           onPointerMove={onPointerMove}
                           onPointerUp={onPointerUp}
@@ -378,36 +449,47 @@ export function GanttPage() {
                             if (t.taskType !== 'production') setSelected(t);
                           }}
                         >
-                          <div className="px-1 pt-0.5">
-                            {t.taskType === 'production' ? (
-                              <>
-                                <span className="font-semibold">{order?.orderNumber}</span>
-                                {wOf(t) > 90 && <span className="ml-1 opacity-80">{product?.productName}</span>}
-                                {wOf(t) > 150 && (
-                                  <span className="ml-1 opacity-70">
-                                    {fmtTime(t.startTime)}-{fmtTime(t.endTime)}
+                          {t.taskType === 'production' ? (
+                            w < 44 ? (
+                              // 區塊太窄:訂單號改為直排(旋轉 90°),窄而高也讀得到
+                              <div className="flex h-full items-center justify-center">
+                                <span className="-rotate-90 whitespace-nowrap text-[12px] font-semibold">
+                                  {order?.orderNumber}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex h-full flex-col justify-center px-2 leading-snug">
+                                <span className="truncate text-[13px] font-semibold">{order?.orderNumber}</span>
+                                {w > 68 && product && (
+                                  <span className="truncate text-[12px] opacity-90">{product.productName}</span>
+                                )}
+                                {w > 156 && (
+                                  <span className="truncate text-[11px] opacity-75">
+                                    {fmtTime(t.startTime)}–{fmtTime(t.endTime)}
                                   </span>
                                 )}
-                              </>
-                            ) : (
-                              wOf(t) > 30 && <span>{TASK_TYPE_LABELS[t.taskType]}</span>
-                            )}
-                          </div>
+                              </div>
+                            )
+                          ) : (
+                            <div className="flex h-full items-center justify-center px-1">
+                              {w > 36 && <span className="truncate text-[12px]">{TASK_TYPE_LABELS[t.taskType]}</span>}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   {/* 拖曳中的幽靈區塊 */}
                   {dragTask && dragRow === ri && (
                     <div
-                      className="pointer-events-none absolute rounded-sm border-2 border-dashed border-blue-500 bg-blue-200/60"
+                      className="pointer-events-none absolute rounded border-2 border-dashed border-blue-500 bg-blue-200/60"
                       style={{
                         left: ((dragNewStart - timeRange.start) / 60_000) * pxPerMin,
-                        width: Math.max(4, wOf(dragTask)),
-                        top: 6,
-                        height: ROW_H - 12,
+                        width: Math.max(6, wOf(dragTask)),
+                        top: 8,
+                        height: ROW_H - 16,
                       }}
                     >
-                      <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-white">
+                      <span className="absolute -top-6 left-0 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-white">
                         {fmtDateTime(dragNewStart)} → {machineRows[dragRow]?.machineCode}
                       </span>
                     </div>
