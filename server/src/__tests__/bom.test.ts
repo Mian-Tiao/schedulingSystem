@@ -9,9 +9,8 @@ let productId: string;
 let bomItemId: string;
 
 beforeAll(async () => {
-  // Clean up database
-  await prisma.bomItem.deleteMany();
-  await prisma.product.deleteMany();
+  // Only clean this suite's fixture; other integration tests share the same database.
+  await prisma.product.deleteMany({ where: { productCode: 'BOM-TEST-P1' } });
 
   // Create a test product
   const productRes = await request(app).post('/api/products').send({
@@ -25,8 +24,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.bomItem.deleteMany();
-  await prisma.product.deleteMany();
+  await prisma.product.deleteMany({ where: { productCode: 'BOM-TEST-P1' } });
   await prisma.$disconnect();
 });
 

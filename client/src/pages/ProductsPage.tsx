@@ -15,7 +15,7 @@ import {
   PageHeader,
   PageMetrics,
 } from '../components/ui';
-import type { Product, BomItem } from '../types';
+import type { Product } from '../types';
 
 interface FormState {
   id?: string;
@@ -465,7 +465,7 @@ function BomModal({ product, onClose }: { product: Product; onClose: () => void 
                                 if (confirm(`確定要刪除原料 ${item.materialName} 嗎？`)) {
                                   try {
                                     await bomMut.remove.mutateAsync(item.id);
-                                  } catch (e) {
+                                  } catch {
                                     alert('刪除失敗');
                                   }
                                 }

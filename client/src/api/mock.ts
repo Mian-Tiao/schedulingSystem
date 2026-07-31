@@ -37,14 +37,20 @@ const setBom = (data: BomItem[]) => setStorage('mock_bom_items', data);
 // 隨機產生 ID
 const genId = () => Math.random().toString(36).substring(2, 9);
 
+type MockRequestBody = Partial<Omit<Product, 'id'>> &
+  Partial<Omit<Machine, 'id' | 'downtimes'>> &
+  Partial<Omit<ChangeoverRule, 'id'>> &
+  Partial<Omit<BomItem, 'id' | 'productId'>> &
+  Partial<Omit<Downtime, 'id' | 'machineId'>>;
+
 // 模擬 API 路由器攔截器
-export function tryMockRequest(method: string, url: string, reqBody?: any): { handled: boolean; data?: any } {
-  // 檢查是否啟用 Mock 功能
-  if (localStorage.getItem('USE_MOCK') === 'false') {
+export function tryMockRequest(method: string, url: string, reqBody?: unknown): { handled: boolean; data?: unknown } {
+  // Mock 必須由開發環境明確啟用，避免正式操作只寫入瀏覽器而沒有進資料庫。
+  if (import.meta.env.VITE_USE_MOCK !== 'true') {
     return { handled: false };
   }
 
-  const body = reqBody || {};
+  const body = (reqBody ?? {}) as MockRequestBody;
 
   // 1. Products API
   if (url === '/api/products') {
@@ -58,10 +64,10 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
       }
       const newItem: Product = {
         id: genId(),
-        productCode: body.productCode,
-        productName: body.productName,
+        productCode: body.productCode!,
+        productName: body.productName!,
         description: body.description ?? null,
-        defaultProcessingTime: body.defaultProcessingTime,
+        defaultProcessingTime: body.defaultProcessingTime!,
         defaultCleaningTime: body.defaultCleaningTime ?? 0,
       };
       list.push(newItem);
@@ -109,9 +115,9 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
         const newItem: BomItem = {
           id: genId(),
           productId,
-          materialName: body.materialName,
-          unit: body.unit,
-          quantity: body.quantity,
+          materialName: body.materialName!,
+          unit: body.unit!,
+          quantity: body.quantity!,
           customFields: body.customFields ?? {},
         };
         list.push(newItem);
@@ -128,7 +134,8 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
       if (method === 'PUT') {
         const idx = list.findIndex(b => b.id === bomId && b.productId === productId);
         if (idx === -1) throw new Error('找不到此 BOM 項目');
-        list[idx] = { ...list[idx], ...body };
+        const existing = list[idx] as BomItem;
+        list[idx] = { ...existing, ...body };
         setBom(list);
         return { handled: true, data: list[idx] };
       }
@@ -152,14 +159,14 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
       }
       const newItem: Machine = {
         id: genId(),
-        machineCode: body.machineCode,
-        machineName: body.machineName,
+        machineCode: body.machineCode!,
+        machineName: body.machineName!,
         model: body.model ?? null,
         description: body.description ?? null,
         supportedProductIds: body.supportedProductIds ?? [],
         defaultSetupTime: body.defaultSetupTime ?? 0,
         defaultCleaningTime: body.defaultCleaningTime ?? 0,
-        workingHours: body.workingHours,
+        workingHours: body.workingHours!,
         status: body.status ?? 'available',
         downtimes: [],
       };
@@ -209,9 +216,9 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
         const newDt: Downtime = {
           id: genId(),
           machineId,
-          type: body.type,
-          startTime: body.startTime,
-          endTime: body.endTime,
+          type: body.type!,
+          startTime: body.startTime!,
+          endTime: body.endTime!,
           reason: body.reason ?? null,
         };
         dts.push(newDt);
@@ -250,7 +257,7 @@ export function tryMockRequest(method: string, url: string, reqBody?: any): { ha
         id: genId(),
         machineId: body.machineId ?? null,
         fromProductId: body.fromProductId ?? null,
-        toProductId: body.toProductId,
+        toProductId: body.toProductId!,
         setupMinutes: body.setupMinutes ?? 0,
         cleaningMinutes: body.cleaningMinutes ?? 0,
       };

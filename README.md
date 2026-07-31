@@ -34,6 +34,9 @@ npm install
 npm run dev                   # 啟動介面:http://localhost:5173
 ```
 
+前端預設會連線真實後端 API。若只想單獨開啟前端並使用瀏覽器 Mock 資料，
+請在 `client/.env.local` 加入 `VITE_USE_MOCK=true` 後重新啟動前端。
+
 ### 啟用 AI 諮詢(選配)
 
 在 `server/.env` 設定:
@@ -48,7 +51,7 @@ AI_MODEL=claude-opus-4-8
 ## 測試與檢查
 
 ```bash
-# 後端:66 個測試(排程引擎單元測試 + API 整合測試)
+# 後端:72 個測試(排程引擎單元測試 + API 整合測試)
 cd server
 npm test
 npm run typecheck

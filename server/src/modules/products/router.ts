@@ -90,10 +90,11 @@ function deserializeBom<T extends { customFields: string }>(b: T) {
 productsRouter.get(
   '/:productId/bom',
   wrap(async (req, res) => {
-    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    const productId = req.params.productId!;
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw notFound('產品');
     const bomItems = await prisma.bomItem.findMany({
-      where: { productId: req.params.productId },
+      where: { productId },
       orderBy: { createdAt: 'asc' },
     });
     res.json(bomItems.map(deserializeBom));
@@ -103,11 +104,12 @@ productsRouter.get(
 productsRouter.post(
   '/:productId/bom',
   wrap(async (req, res) => {
-    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    const productId = req.params.productId!;
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw notFound('產品');
     const data = bomItemSchema.parse(req.body);
     const created = await prisma.bomItem.create({
-      data: serializeBom({ ...data, productId: req.params.productId }),
+      data: serializeBom({ ...data, productId }),
     });
     res.status(201).json(deserializeBom(created));
   }),
@@ -116,16 +118,17 @@ productsRouter.post(
 productsRouter.put(
   '/:productId/bom/:id',
   wrap(async (req, res) => {
-    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    const productId = req.params.productId!;
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw notFound('產品');
     const found = await prisma.bomItem.findFirst({
-      where: { id: req.params.id, productId: req.params.productId },
+      where: { id: req.params.id, productId },
     });
     if (!found) throw notFound('BOM 項目');
     const data = bomItemSchema.parse(req.body);
     const updated = await prisma.bomItem.update({
       where: { id: req.params.id },
-      data: serializeBom({ ...data, productId: req.params.productId }),
+      data: serializeBom({ ...data, productId }),
     });
     res.json(deserializeBom(updated));
   }),
@@ -134,10 +137,11 @@ productsRouter.put(
 productsRouter.delete(
   '/:productId/bom/:id',
   wrap(async (req, res) => {
-    const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    const productId = req.params.productId!;
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw notFound('產品');
     const found = await prisma.bomItem.findFirst({
-      where: { id: req.params.id, productId: req.params.productId },
+      where: { id: req.params.id, productId },
     });
     if (!found) throw notFound('BOM 項目');
     await prisma.bomItem.delete({ where: { id: req.params.id } });
