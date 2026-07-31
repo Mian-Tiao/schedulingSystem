@@ -78,10 +78,10 @@ npm run build
      合法則自動重算換模/清洗、後續工作與所有績效,並顯示**調整前後差異**。
    - 支援 ↩ 復原 / ↪ 重做 / ⟲ 回復原始排程。
 6. **情境模擬**:
-   - **急單插入**:比較「插入目前排程(既有訂單不動)」與「全部重排」兩種策略的交期影響。
-   - **機台故障**:輸入故障機台與預估修復時間 → 顯示哪些訂單會延遲多久、
-     反向計算「最晚幾點修好才不會讓重要訂單逾期」、轉移機台與處理順序建議。
-7. **AI 諮詢**:以真實排程數據回答「為什麼這個方案第一?」「哪台機台是瓶頸?」等問題。
+   - **急單插入**: 比較「插入目前排程(既有訂單不動)」與「全部重排」兩種策略的交期影響。結果區塊下方提供「套用此策略」按鈕，可模擬套用結果並跳轉至甘特圖。
+   - **機台故障**: 輸入故障機台與預估修復時間 → 顯示哪些訂單會延遲多久、
+     反向計算「最晚幾點修好才不會讓重要訂單逾期」、轉移機台與處理順序建議。結果下方提供「套用故障調整」按鈕，可模擬套用結果並跳轉至甘特圖。
+7. **AI 諮詢**: 以真實排程數據回答「為什麼這個方案第一?」「哪台機台是瓶頸?」等問題。
 
 ## 排程模型(MVP 假設)
 
@@ -101,6 +101,47 @@ npm run build
 `/api/orders`(含 `/import`、`/:id/duplicate`)、
 `/api/schedules/generate|:id|:id/validate-adjustment|:id/adjust|:id/reset|:id/recalculate`、
 `/api/simulations/urgent-order|machine-breakdown`、`/api/ai/analyze|chat|status`、`/api/dashboard`。
+
+### 預留之情境模擬套用 API 規格 (未來整合用)
+為了將來能正式將模擬結果寫入排程與資料庫，後端需實作以下兩個 API：
+
+1. **套用急單模擬結果**
+   * **路徑**: `POST /api/simulations/urgent-order/apply`
+   * **請求內容**:
+     ```json
+     {
+       "scenarioId": "string (基準排程 ID)",
+       "strategy": "insert | rebuild",
+       "order": {
+         "orderNumber": "string",
+         "productId": "string",
+         "quantity": "number",
+         "releaseTime": "ISO-8601 string",
+         "dueDate": "ISO-8601 string",
+         "priority": "number",
+         "processingTime": "number (optional)"
+       }
+     }
+     ```
+   * **預期行為**:
+     1. **【重要】** 將該急單正式新增至 `ProductionOrder` 資料庫表中，使其進入「訂單管理」系統（狀態設為 `SCHEDULED`），在訂單列表中可被查詢。
+     2. 若 `strategy === 'insert'`，分別在現有的 4 個排程方案中執行直接插入，更新任務與 `baselineTasks`；若有方案無法插入，回傳錯誤（回滾資料庫）。
+     3. 若 `strategy === 'rebuild'`，將急單加入後以原 objective 重新跑排程引擎，覆蓋資料庫中的方案任務。
+
+2. **套用機台故障結果**
+   * **路徑**: `POST /api/simulations/machine-breakdown/apply`
+   * **請求內容**:
+     ```json
+     {
+       "scenarioId": "string (基準排程 ID)",
+       "machineId": "string",
+       "startTime": "ISO-8601 string",
+       "estimatedRepairTime": "ISO-8601 string"
+     }
+     ```
+   * **預期行為**:
+     1. 將故障時段寫入 `MachineDowntime` 表，類型為 `breakdown`。
+     2. 以原排程目標重新執行排程引擎，避開該機台故障時段，覆蓋資料庫中的方案任務。
 
 錯誤格式統一為 `{ "error": { "code", "message" } }`,訊息皆為繁體中文。
 時間儲存 ISO 8601,顯示時區 Asia/Taipei。

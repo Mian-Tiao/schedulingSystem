@@ -194,3 +194,15 @@ export const PRIORITY_LABELS: Record<number, string> = {
   4: '4(低)',
   5: '5(最低)',
 };
+
+export interface BomItem {
+  id: string;
+  productId: string;
+  materialName: string;
+  unit: string;
+  quantity: number;
+  customFields: Record<string, string>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+

@@ -31,11 +31,25 @@ async function handle<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+import { tryMockRequest } from './mock';
+
 export async function apiGet<T>(url: string): Promise<T> {
+  try {
+    const { handled, data } = tryMockRequest('GET', url);
+    if (handled) return data as T;
+  } catch (e: any) {
+    throw new ApiError('MOCK_ERROR', e.message, 400);
+  }
   return handle(await fetch(url));
 }
 
 export async function apiSend<T>(method: string, url: string, body?: unknown): Promise<T> {
+  try {
+    const { handled, data } = tryMockRequest(method, url, body);
+    if (handled) return data as T;
+  } catch (e: any) {
+    throw new ApiError('MOCK_ERROR', e.message, 400);
+  }
   return handle(
     await fetch(url, {
       method,
@@ -48,3 +62,4 @@ export async function apiSend<T>(method: string, url: string, body?: unknown): P
 export const apiPost = <T,>(url: string, body?: unknown) => apiSend<T>('POST', url, body);
 export const apiPut = <T,>(url: string, body?: unknown) => apiSend<T>('PUT', url, body);
 export const apiDelete = <T,>(url: string) => apiSend<T>('DELETE', url);
+

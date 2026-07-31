@@ -18,6 +18,8 @@ import {
   inputCls,
   Loading,
   Modal,
+  PageHeader,
+  PageMetrics,
 } from '../components/ui';
 import type { DaySegment, Machine, WeekKey, WorkingHours } from '../types';
 import { fmtDateTime, fromLocalInput } from '../utils/time';
@@ -109,11 +111,18 @@ export function MachinesPage() {
   if (isLoading) return <Loading />;
   if (error) return <ErrorState message={(error as Error).message} />;
 
+  const availableCount = (machines ?? []).filter((machine) => machine.status === 'available').length;
+  const maintenanceCount = (machines ?? []).filter((machine) => machine.status === 'maintenance').length;
+  const disabledCount = (machines ?? []).filter((machine) => machine.status === 'disabled').length;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">機台管理</h1>
-        <div className="flex gap-2">
+    <div className="machines-page space-y-6">
+      <PageHeader
+        eyebrow="SHOP FLOOR"
+        title="機台管理"
+        description="設定機台能力、工作日曆與停機資訊，維持可用產能的真實樣貌。"
+        actions={
+          <>
           <Button variant="secondary" onClick={() => setRuleOpen(true)}>
             換模規則
           </Button>
@@ -134,22 +143,31 @@ export function MachinesPage() {
           >
             + 新增機台
           </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      <PageMetrics
+        items={[
+          { label: '機台總數', value: machines?.length ?? 0, detail: '現場設備', tone: 'blue' },
+          { label: '目前可用', value: availableCount, detail: '可立即投入排程', tone: 'green' },
+          { label: '維護中', value: maintenanceCount, detail: '暫不可排產', tone: maintenanceCount > 0 ? 'amber' : 'default' },
+          { label: '已停用', value: disabledCount, detail: `${rules?.length ?? 0} 組換模規則`, tone: disabledCount > 0 ? 'red' : 'default' },
+        ]}
+      />
 
       {!machines || machines.length === 0 ? (
         <EmptyState text="尚未建立機台。" />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="machine-card-grid grid gap-5 lg:grid-cols-2">
           {machines.map((m) => (
-            <div key={m.id} className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="mb-2 flex items-start justify-between">
+            <article key={m.id} className={`machine-card is-${m.status}`}>
+              <div className="machine-card-head">
                 <div>
-                  <h2 className="font-semibold text-slate-800">
-                    {m.machineCode} {m.machineName}
-                    {m.model && <span className="ml-2 text-xs font-normal text-slate-400">{m.model}</span>}
-                  </h2>
-                  <div className="mt-1 flex gap-1">
+                  <p className="machine-card-code">{m.machineCode}</p>
+                  <h2>{m.machineName}</h2>
+                  {m.model && <span className="machine-model">{m.model}</span>}
+                  <div className="mt-2 flex gap-1">
                     {m.status === 'available' && <Badge tone="green">✓ 可用</Badge>}
                     {m.status === 'maintenance' && <Badge tone="amber">🔧 維護中</Badge>}
                     {m.status === 'disabled' && <Badge tone="slate">⛔ 停用</Badge>}
@@ -248,7 +266,7 @@ export function MachinesPage() {
                   </ul>
                 )}
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
