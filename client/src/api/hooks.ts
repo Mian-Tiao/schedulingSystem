@@ -12,7 +12,7 @@ import type {
   ScenarioSummary,
   ValidateAdjustmentResult,
 } from '../types';
-import { apiDelete, apiGet, apiPost, apiPut } from './client';
+import { apiDelete, apiGet, apiPost, apiPut, apiPatch } from './client';
 
 // ---- Products ----
 export const useProducts = () => useQuery({ queryKey: ['products'], queryFn: () => apiGet<Product[]>('/api/products') });
@@ -83,6 +83,16 @@ export function useOrderMutations() {
     update: useMutation({
       mutationFn: ({ id, body }: { id: string; body: unknown }) => apiPut(`/api/orders/${id}`, body),
       onSuccess: invalidate,
+    }),
+    updateStatus: useMutation({
+      mutationFn: ({ id, status }: { id: string; status: string }) =>
+        apiPatch(`/api/orders/${id}/status`, { status }),
+      onSuccess: () => {
+        invalidate();
+        qc.invalidateQueries({ queryKey: ['scenarios'] });
+        qc.invalidateQueries({ queryKey: ['scenario'] });
+        qc.invalidateQueries({ queryKey: ['dashboard'] });
+      },
     }),
     remove: useMutation({ mutationFn: (id: string) => apiDelete(`/api/orders/${id}`), onSuccess: invalidate }),
     duplicate: useMutation({ mutationFn: (id: string) => apiPost(`/api/orders/${id}/duplicate`), onSuccess: invalidate }),

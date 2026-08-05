@@ -47,4 +47,5 @@ export async function apiSend<T>(method: string, url: string, body?: unknown): P
 
 export const apiPost = <T,>(url: string, body?: unknown) => apiSend<T>('POST', url, body);
 export const apiPut = <T,>(url: string, body?: unknown) => apiSend<T>('PUT', url, body);
+export const apiPatch = <T,>(url: string, body?: unknown) => apiSend<T>('PATCH', url, body);
 export const apiDelete = <T,>(url: string) => apiSend<T>('DELETE', url);

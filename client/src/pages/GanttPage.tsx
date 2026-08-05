@@ -57,6 +57,12 @@ export function GanttPage() {
   const [busy, setBusy] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const [nowTime, setNowTime] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowTime(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
   // scenario 載入後初始化歷史
   useEffect(() => {
     if (scenario) {
@@ -95,6 +101,9 @@ export function GanttPage() {
     const end = Math.ceil((max + TZOFF) / DAY) * DAY - TZOFF;
     return { start, end };
   }, [tasks]);
+
+  const showNowLine = timeRange && nowTime >= timeRange.start && nowTime <= timeRange.end;
+  const nowX = showNowLine ? ((nowTime - timeRange.start) / 60_000) * pxPerMin : 0;
 
   if (!scenarioId)
     return (
@@ -312,7 +321,22 @@ export function GanttPage() {
       {/* 甘特圖主體 */}
       <div className="rounded-lg border border-slate-200 bg-white">
         <div className="overflow-x-auto" ref={containerRef}>
-          <div style={{ width: LABEL_W + chartW, minWidth: '100%' }}>
+          <div className="relative" style={{ width: LABEL_W + chartW, minWidth: '100%' }}>
+            {/* 時間紅線 */}
+            {showNowLine && (
+              <div
+                className="absolute z-20 pointer-events-none border-l-2 border-red-500 flex flex-col items-center"
+                style={{
+                  left: LABEL_W + nowX,
+                  top: 0,
+                  bottom: 0,
+                }}
+              >
+                <span className="absolute -top-1 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded shadow whitespace-nowrap -translate-x-1/2 z-30">
+                  現在時間 {fmtTime(new Date(nowTime).toISOString())}
+                </span>
+              </div>
+            )}
             {/* 時間刻度列 */}
             <div className="relative border-b border-slate-200" style={{ height: HEADER_H, marginLeft: LABEL_W }}>
               {ticks.map((tk, i) => (

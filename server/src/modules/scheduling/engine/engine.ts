@@ -32,16 +32,49 @@ export interface EngineResult {
   completionByOrder: Map<string, number>;
 }
 
-export function createMachineStates(machines: Machine[], anchorTime: number): Map<string, MachineState> {
+export function createMachineStates(
+  machines: Machine[],
+  anchorTime: number,
+  inProgressTasks?: ScheduledTask[],
+  inProgressOrders?: ProductionOrder[],
+): Map<string, MachineState> {
   const map = new Map<string, MachineState>();
+  const orderProductMap = new Map<string, string>(
+    (inProgressOrders ?? []).map((o) => [o.id, o.productId])
+  );
+
   for (const m of machines) {
     if (m.status === 'disabled') continue;
+
+    const mTasks = (inProgressTasks ?? []).filter((t) => t.machineId === m.id);
+    const busy = mTasks.map((t) => ({ start: t.startTime, end: t.endTime }));
+    busy.sort((a, b) => a.start - b.start);
+
+    const prodTasks = mTasks.filter((t) => t.taskType === 'production');
+    let lastProductId: string | null = null;
+    let lastEnd = anchorTime;
+    let loadMinutes = 0;
+
+    if (mTasks.length > 0) {
+      const maxTaskEnd = Math.max(...mTasks.map((t) => t.endTime));
+      lastEnd = Math.max(anchorTime, maxTaskEnd);
+    }
+
+    if (prodTasks.length > 0) {
+      prodTasks.sort((a, b) => a.endTime - b.endTime);
+      const lastTask = prodTasks[prodTasks.length - 1]!;
+      if (lastTask.orderId) {
+        lastProductId = orderProductMap.get(lastTask.orderId) ?? null;
+      }
+      loadMinutes = prodTasks.reduce((sum, t) => sum + (t.endTime - t.startTime) / 60_000, 0);
+    }
+
     map.set(m.id, {
       machine: m,
-      busy: [],
-      lastProductId: null,
-      lastEnd: anchorTime,
-      loadMinutes: 0,
+      busy,
+      lastProductId,
+      lastEnd,
+      loadMinutes,
     });
   }
   return map;
@@ -227,7 +260,7 @@ const comparators: Record<Exclude<AlgorithmId, 'CR'>, OrderComparator> = {
  */
 export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): EngineResult {
   const horizonEnd = input.anchorTime + (input.horizonDays ?? DEFAULT_HORIZON_DAYS) * DAY_MS;
-  const states = createMachineStates(input.machines, input.anchorTime);
+  const states = createMachineStates(input.machines, input.anchorTime, input.inProgressTasks, input.inProgressOrders);
   const productById = new Map<string, Product>(input.products.map((p) => [p.id, p]));
 
   const tasks: ScheduledTask[] = [];
@@ -291,6 +324,15 @@ export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): En
   }
 
   tasks.push(...maintenanceTasks(input, horizonEnd, algorithm));
+
+  if (input.inProgressTasks) {
+    // 複製進行中任務，並更新其 ID 加上演算法前綴，避免多演算法間 ID 衝突
+    tasks.push(...input.inProgressTasks.map((t) => ({
+      ...t,
+      id: `${algorithm}-inProgress-${t.id.includes('-') ? t.id.split('-').slice(1).join('-') : t.id}`,
+    })));
+  }
+
   return { algorithm, tasks, unscheduledOrders: unscheduled, completionByOrder };
 }
 

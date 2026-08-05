@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { prisma } from '../../shared/db.js';
 import { wrap } from '../../shared/errors.js';
 import { toTask } from '../../shared/mappers.js';
+import { syncOrderStatuses } from '../../shared/orderSync.js';
 
 export const dashboardRouter = Router();
 
 dashboardRouter.get(
   '/',
   wrap(async (_req, res) => {
+    await syncOrderStatuses();
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);

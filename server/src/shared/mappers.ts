@@ -25,6 +25,7 @@ import type {
   WorkingHours,
 } from '../modules/scheduling/engine/types.js';
 import { prisma } from './db.js';
+import { syncOrderStatuses } from './orderSync.js';
 
 export const EMPTY_WORKING_HOURS: WorkingHours = {
   mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [],
@@ -131,22 +132,60 @@ export function taskToJson(t: ScheduledTask) {
  * 從資料庫載入排程引擎輸入(pending/scheduled 的訂單)。
  */
 export async function loadSchedulingInput(anchorTime: number): Promise<SchedulingInput> {
-  const [products, machines, downtimes, rules, orders] = await Promise.all([
-    prisma.product.findMany(),
-    prisma.machine.findMany(),
-    prisma.machineDowntime.findMany(),
-    prisma.changeoverRule.findMany(),
-    prisma.productionOrder.findMany({
-      where: { status: { in: ['pending', 'scheduled'] } },
-      orderBy: { createdAt: 'asc' },
-    }),
-  ]);
-  return {
-    products: products.map(toProduct),
-    machines: machines.map(toMachine),
-    downtimes: downtimes.map(toDowntime),
-    changeoverRules: rules.map(toChangeoverRule),
-    orders: orders.map(toOrder),
-    anchorTime,
-  };
+  // 1. 自動把「超時已完成」與「時間內進行中」的訂單狀態同步更新
+  await syncOrderStatuses(new Date(anchorTime));
+
+  // 找出目前排行第一的方案
+  const topScenario = await prisma.scheduleScenario.findFirst({
+    where: { rank: 1 },
+  });
+
+  let inProgressTasks: DbTask[] = [];
+
+  if (topScenario) {
+    // 2. 獲取所有目前狀態為 inProgress 的訂單
+    const dbInProgressOrders = await prisma.productionOrder.findMany({
+      where: { status: 'inProgress' },
+    });
+    const inProgressOrderIds = dbInProgressOrders.map((o) => o.id);
+
+    if (inProgressOrderIds.length > 0) {
+      // 找出這些進行中訂單在 topScenario 中的所有任務
+      inProgressTasks = await prisma.scheduledTask.findMany({
+        where: {
+          scenarioId: topScenario.id,
+          orderId: { in: inProgressOrderIds },
+        },
+      });
+    }
+    
+    // 將 dbInProgressOrders 傳遞給後續使用
+    return runLoad(dbInProgressOrders);
+  }
+
+  return runLoad([]);
+
+  async function runLoad(dbInProgressOrders: any[]) {
+    const [products, machines, downtimes, rules, orders] = await Promise.all([
+      prisma.product.findMany(),
+      prisma.machine.findMany(),
+      prisma.machineDowntime.findMany(),
+      prisma.changeoverRule.findMany(),
+      prisma.productionOrder.findMany({
+        where: { status: { in: ['pending', 'scheduled'] } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    return {
+      products: products.map(toProduct),
+      machines: machines.map(toMachine),
+      downtimes: downtimes.map(toDowntime),
+      changeoverRules: rules.map(toChangeoverRule),
+      orders: orders.map(toOrder),
+      anchorTime,
+      inProgressTasks: inProgressTasks.map(toTask),
+      inProgressOrders: dbInProgressOrders.map(toOrder),
+    };
+  }
 }

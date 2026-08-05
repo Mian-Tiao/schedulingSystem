@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../shared/db.js';
 import { AppError, notFound, wrap } from '../../shared/errors.js';
+import { syncOrderStatuses } from '../../shared/orderSync.js';
 
 const orderSchema = z
   .object({
@@ -46,6 +47,7 @@ const listQuerySchema = z.object({
 ordersRouter.get(
   '/',
   wrap(async (req, res) => {
+    await syncOrderStatuses();
     const q = listQuerySchema.parse(req.query);
     const where: Record<string, unknown> = {};
     if (q.productId) where.productId = q.productId;
@@ -121,6 +123,22 @@ ordersRouter.put(
         status: data.status,
         notes: data.notes ?? null,
       },
+    });
+    res.json(updated);
+  }),
+);
+
+ordersRouter.patch(
+  '/:id/status',
+  wrap(async (req, res) => {
+    const found = await prisma.productionOrder.findUnique({ where: { id: req.params.id } });
+    if (!found) throw notFound('訂單');
+    const data = z.object({
+      status: z.enum(['pending', 'scheduled', 'inProgress', 'completed', 'cancelled']),
+    }).parse(req.body);
+    const updated = await prisma.productionOrder.update({
+      where: { id: req.params.id },
+      data: { status: data.status },
     });
     res.json(updated);
   }),
