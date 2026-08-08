@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../api/client';
 import { useMachines, useOrderMutations, useOrders, useProducts } from '../api/hooks';
 import {
@@ -55,7 +55,7 @@ export function OrdersPage() {
   const { data: orders, isLoading, error } = useOrders(filters);
   const { data: products } = useProducts();
   const { data: machines } = useMachines();
-  const { create, update, remove, duplicate, importCsv } = useOrderMutations();
+  const { create, update, remove, duplicate, importCsv, updateStatus } = useOrderMutations();
 
   const [form, setForm] = useState<FormState | null>(null);
   const [formError, setFormError] = useState('');
@@ -64,6 +64,15 @@ export function OrdersPage() {
   const [csvText, setCsvText] = useState('');
   const [csvResult, setCsvResult] = useState<{ imported: number; failed: number; results: { line: number; orderNumber: string; ok: boolean; error?: string }[] } | null>(null);
   const [sortKey, setSortKey] = useState<'dueDate' | 'orderNumber' | 'priority'>('dueDate');
+
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeMenuId) return;
+    const onClick = () => setActiveMenuId(null);
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, [activeMenuId]);
 
   const productById = useMemo(() => new Map((products ?? []).map((p) => [p.id, p])), [products]);
 
@@ -228,33 +237,106 @@ export function OrdersPage() {
                     {o.status === 'completed' && <Badge tone="slate">已完成</Badge>}
                     {o.status === 'cancelled' && <Badge tone="slate">已取消</Badge>}
                   </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button
-                      variant="ghost"
-                      onClick={() =>
-                        setForm({
-                          id: o.id,
-                          orderNumber: o.orderNumber,
-                          productId: o.productId,
-                          quantity: String(o.quantity),
-                          releaseTime: toLocalInput(o.releaseTime),
-                          dueDate: toLocalInput(o.dueDate),
-                          processingTime: String(o.processingTime),
-                          priority: String(o.priority),
-                          eligibleMachineIds: o.eligibleMachineIds,
-                          notes: o.notes ?? '',
-                          status: o.status,
-                        })
-                      }
-                    >
-                      編輯
-                    </Button>
-                    <Button variant="ghost" onClick={() => duplicate.mutate(o.id)}>
-                      複製
-                    </Button>
-                    <Button variant="ghost" onClick={() => setDeleting(o)}>
-                      刪除
-                    </Button>
+                  <td className="px-3 py-2 text-right relative overflow-visible">
+                    <div className="inline-block text-left">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveMenuId(activeMenuId === o.id ? null : o.id);
+                        }}
+                        className="rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors focus:outline-none"
+                      >
+                        操作 ▾
+                      </button>
+
+                      {activeMenuId === o.id && (
+                        <div className="absolute right-3 mt-1 z-30 w-36 rounded-md border border-slate-200 bg-white py-1 shadow-lg text-left">
+                          <button
+                            className="block w-full px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 text-left"
+                            onClick={() => {
+                              setForm({
+                                id: o.id,
+                                orderNumber: o.orderNumber,
+                                productId: o.productId,
+                                quantity: String(o.quantity),
+                                releaseTime: toLocalInput(o.releaseTime),
+                                dueDate: toLocalInput(o.dueDate),
+                                processingTime: String(o.processingTime),
+                                priority: String(o.priority),
+                                eligibleMachineIds: o.eligibleMachineIds,
+                                notes: o.notes ?? '',
+                                status: o.status,
+                              });
+                            }}
+                          >
+                            編輯訂單
+                          </button>
+                          <button
+                            className="block w-full px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 text-left"
+                            onClick={() => duplicate.mutate(o.id)}
+                          >
+                            複製訂單
+                          </button>
+                          <button
+                            className="block w-full px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 text-left font-medium"
+                            onClick={() => setDeleting(o)}
+                          >
+                            刪除訂單
+                          </button>
+
+                          <div className="my-1 border-t border-slate-100" />
+
+                          {(o.status === 'pending' || o.status === 'scheduled') && (
+                            <>
+                              <button
+                                className="block w-full px-3 py-1.5 text-xs text-blue-600 hover:bg-slate-50 text-left"
+                                onClick={() => updateStatus.mutate({ id: o.id, status: 'inProgress' })}
+                              >
+                                開始生產
+                              </button>
+                              <button
+                                className="block w-full px-3 py-1.5 text-xs text-green-600 hover:bg-slate-50 text-left"
+                                onClick={() => updateStatus.mutate({ id: o.id, status: 'completed' })}
+                              >
+                                標記為已完成
+                              </button>
+                              <button
+                                className="block w-full px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50 text-left"
+                                onClick={() => updateStatus.mutate({ id: o.id, status: 'cancelled' })}
+                              >
+                                取消訂單
+                              </button>
+                            </>
+                          )}
+
+                          {o.status === 'inProgress' && (
+                            <>
+                              <button
+                                className="block w-full px-3 py-1.5 text-xs text-green-600 hover:bg-slate-50 text-left"
+                                onClick={() => updateStatus.mutate({ id: o.id, status: 'completed' })}
+                              >
+                                標記為已完成
+                              </button>
+                              <button
+                                className="block w-full px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50 text-left"
+                                onClick={() => updateStatus.mutate({ id: o.id, status: 'cancelled' })}
+                              >
+                                取消訂單
+                              </button>
+                            </>
+                          )}
+
+                          {(o.status === 'completed' || o.status === 'cancelled') && (
+                            <button
+                              className="block w-full px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 text-left"
+                              onClick={() => updateStatus.mutate({ id: o.id, status: 'pending' })}
+                            >
+                              重設為未排程
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

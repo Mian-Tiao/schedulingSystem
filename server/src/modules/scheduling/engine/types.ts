@@ -154,6 +154,8 @@ export interface SchedulingInput {
   anchorTime: number;
   /** 規劃期間(天),預設 60 */
   horizonDays?: number;
+  inProgressTasks?: ScheduledTask[];
+  inProgressOrders?: ProductionOrder[];
 }
 
 /** 單一訂單在某機台上的一次安排(cleaning → setup → production) */
