@@ -22,7 +22,7 @@ import type { GenerateResult } from '../hooks';
 import type { AlgorithmId, Metrics, ObjectiveId, ScenarioSummary } from '../../types';
 
 /** 後端支援 machineIds 後改成 false，全頁自動改走真 API。 */
-export const USE_MOCK = true;
+export const USE_MOCK = false;
 
 export interface MockGenerateResult extends GenerateResult {
   /** 各機台被占用的分鐘數；busyMinutes === 0 代表閒置（僅 mock 提供，供防呆建議用）。 */

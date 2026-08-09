@@ -70,7 +70,7 @@ export function validateSchedulingInput(input: SchedulingInput): ValidationIssue
     }
     if (eligibleMachines(o, input.machines).length === 0) {
       issues.push({
-        level: 'error',
+        level: 'warning',
         code: 'NO_ELIGIBLE_MACHINE',
         message: `訂單 ${o.orderNumber} 沒有可加工的機台(請確認機台可加工產品設定)`,
       });

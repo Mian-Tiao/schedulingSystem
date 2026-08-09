@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useMachines, useOrders, useScenarios, useScheduleMutations } from '../api/hooks';
-import { USE_MOCK, mockGenerateWithMachines, pickMinimumMachines, type MockGenerateResult } from '../api/mock/schedule';
+import { pickMinimumMachines, type MockGenerateResult } from '../api/mock/schedule';
 import { Badge, Banner, Button, EmptyState, ErrorState, Loading } from '../components/ui';
 import type { ObjectiveId, ScenarioSummary } from '../types';
 import { OBJECTIVE_LABELS } from '../types';
@@ -63,24 +63,16 @@ export function SchedulePage() {
           setGenError('請至少勾選一台機台再執行排程');
           return;
         }
-        if (USE_MOCK) {
-          setRunning(true);
-          await new Promise((r) => setTimeout(r, 400)); // 模擬運算延遲
-          const result = mockGenerateWithMachines({
-            objective,
-            machineIds: selectedMachineIds,
-            orderCount: orders?.length ?? 12,
-          });
-          setRunResult(result);
-          setIssues(result.issues);
-        } else {
-          // 後端支援 machineIds 後改走這裡(需同步在 hooks 的 generate 帶入 machineIds)
-          throw new Error('後端尚未支援手動選機台,請先將 mock/schedule.ts 的 USE_MOCK 保持為 true');
-        }
+        const result = await generate.mutateAsync({ objective, machineIds: selectedMachineIds });
+        setRunResult({
+          ...result,
+          machineLoad: selectedMachineIds.map((machineId) => ({ machineId, busyMinutes: 1 })),
+        });
+        setIssues(result.issues);
       } else {
         // 自動模式:走真後端(用全部機台 → 產生真方案,可看真甘特圖)。
         // 「開最少機台」目前為建議顯示;待後端支援 machineIds 後可改為真的只排最少機台。
-        const result = await generate.mutateAsync(objective);
+        const result = await generate.mutateAsync({ objective });
         setRunResult({ ...result, machineLoad: [] });
         setIssues(result.issues);
         const ids = availableMachines.map((m) => m.id);
@@ -269,11 +261,6 @@ export function SchedulePage() {
                 </span>
               )}
             </div>
-            {USE_MOCK && mode === 'manual' && (
-              <p className="mt-2 text-xs text-amber-600">
-                ⚠ 手動選機台目前使用前端模擬資料(後端串接後自動改為真實排程)。
-              </p>
-            )}
           </section>
         </div>
       </div>

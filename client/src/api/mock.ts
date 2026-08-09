@@ -40,7 +40,7 @@ const genId = () => Math.random().toString(36).substring(2, 9);
 // 模擬 API 路由器攔截器
 export function tryMockRequest(method: string, url: string, reqBody?: any): { handled: boolean; data?: any } {
   // 檢查是否啟用 Mock 功能
-  if (localStorage.getItem('USE_MOCK') === 'false') {
+  if (localStorage.getItem('USE_MOCK') !== 'true') {
     return { handled: false };
   }
 

@@ -117,6 +117,11 @@ export interface GenerateResult {
   recommended: string[];
 }
 
+export interface GeneratePayload {
+  objective: ObjectiveId;
+  machineIds?: string[];
+}
+
 export function useScheduleMutations() {
   const qc = useQueryClient();
   const invalidateAll = () => {
@@ -127,7 +132,7 @@ export function useScheduleMutations() {
   };
   return {
     generate: useMutation({
-      mutationFn: (objective: ObjectiveId) => apiPost<GenerateResult>('/api/schedules/generate', { objective }),
+      mutationFn: (payload: GeneratePayload) => apiPost<GenerateResult>('/api/schedules/generate', payload),
       onSuccess: invalidateAll,
     }),
     validateAdjustment: useMutation({
