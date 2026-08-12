@@ -165,7 +165,7 @@ export async function loadSchedulingInput(anchorTime: number): Promise<Schedulin
 
   return runLoad([]);
 
-  async function runLoad(dbInProgressOrders: any[]) {
+  async function runLoad(dbInProgressOrders: DbOrder[]) {
     const [products, machines, downtimes, rules, orders] = await Promise.all([
       prisma.product.findMany(),
       prisma.machine.findMany(),

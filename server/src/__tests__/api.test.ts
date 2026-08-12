@@ -219,6 +219,21 @@ describe('排程產生', () => {
     scenarioIds = res.body.scenarios.map((s: { scenarioId: string }) => s.scenarioId);
   });
 
+  it('手動選擇機台時只會產生該機台的甘特圖任務', async () => {
+    const res = await request(app)
+      .post('/api/schedules/generate')
+      .send({ objective: 'ON_TIME_DELIVERY', machineIds: [machine1], anchorTime: ANCHOR });
+
+    expect(res.status).toBe(200);
+    expect(res.body.scenarios).toHaveLength(4);
+    scenarioIds = res.body.scenarios.map((s: { scenarioId: string }) => s.scenarioId);
+
+    const detail = await request(app).get(`/api/schedules/${scenarioIds[0]}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.tasks.length).toBeGreaterThan(0);
+    expect(detail.body.tasks.every((task: { machineId: string }) => task.machineId === machine1)).toBe(true);
+  });
+
   it('排程任務不與維護時段重疊', async () => {
     const res = await request(app).get(`/api/schedules/${scenarioIds[0]}`);
     expect(res.status).toBe(200);

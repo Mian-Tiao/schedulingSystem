@@ -51,7 +51,7 @@ AI_MODEL=claude-opus-4-8
 ## 測試與檢查
 
 ```bash
-# 後端:72 個測試(排程引擎單元測試 + API 整合測試)
+# 後端:73 個測試(排程引擎單元測試 + API 整合測試)
 cd server
 npm test
 npm run typecheck

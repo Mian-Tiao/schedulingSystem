@@ -49,6 +49,7 @@ schedulesRouter.post(
     const body = z
       .object({
         objective: objectiveSchema,
+        machineIds: z.array(z.string().min(1)).optional(),
         /** 測試用:固定排程起點以確保 deterministic */
         anchorTime: z.string().datetime({ offset: true }).optional(),
         horizonDays: z.number().int().min(1).max(365).optional(),
@@ -58,6 +59,12 @@ schedulesRouter.post(
     const anchorTime = body.anchorTime ? Date.parse(body.anchorTime) : Date.now();
     const input = await loadSchedulingInput(anchorTime);
     if (body.horizonDays) input.horizonDays = body.horizonDays;
+    if (body.machineIds?.length) {
+      const selectedMachineIds = new Set(body.machineIds);
+      input.machines = input.machines.filter((m) => selectedMachineIds.has(m.id));
+      input.downtimes = input.downtimes.filter((d) => selectedMachineIds.has(d.machineId));
+      input.changeoverRules = input.changeoverRules.filter((r) => !r.machineId || selectedMachineIds.has(r.machineId));
+    }
 
     const started = Date.now();
     const batchId = `b${anchorTime}`;
