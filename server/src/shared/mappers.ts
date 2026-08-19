@@ -131,7 +131,16 @@ export function taskToJson(t: ScheduledTask) {
 /**
  * 從資料庫載入排程引擎輸入(pending/scheduled 的訂單)。
  */
-export async function loadSchedulingInput(anchorTime: number): Promise<SchedulingInput> {
+export async function loadSchedulingInput(
+  anchorTime: number,
+  /**
+   * 額外要載入的訂單 id(不論狀態)。
+   * 調整 / 模擬「既有排程」時,方案裡的訂單可能已被自動同步成 completed / inProgress,
+   * 需要連同這些狀態的訂單一起載入,否則會找不到訂單資料。
+   * 產生新排程時不傳,維持只排 pending / scheduled。
+   */
+  includeOrderIds: string[] = [],
+): Promise<SchedulingInput> {
   // 1. 自動把「超時已完成」與「時間內進行中」的訂單狀態同步更新
   await syncOrderStatuses(new Date(anchorTime));
 
@@ -172,7 +181,9 @@ export async function loadSchedulingInput(anchorTime: number): Promise<Schedulin
       prisma.machineDowntime.findMany(),
       prisma.changeoverRule.findMany(),
       prisma.productionOrder.findMany({
-        where: { status: { in: ['pending', 'scheduled'] } },
+        where: includeOrderIds.length
+          ? { OR: [{ status: { in: ['pending', 'scheduled'] } }, { id: { in: includeOrderIds } }] }
+          : { status: { in: ['pending', 'scheduled'] } },
         orderBy: { createdAt: 'asc' },
       }),
     ]);

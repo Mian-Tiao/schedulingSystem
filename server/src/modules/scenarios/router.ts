@@ -122,6 +122,11 @@ schedulesRouter.get(
   }),
 );
 
+/** 收集方案任務涉及的訂單 id(去重)——載入既有排程時,連 completed/inProgress 的訂單一起載入 */
+function scenarioOrderIds(...taskLists: { orderId: string | null }[][]): string[] {
+  return [...new Set(taskLists.flat().map((t) => t.orderId).filter((x): x is string => Boolean(x)))];
+}
+
 const adjustmentSchema = z.object({
   taskId: z.string().min(1),
   machineId: z.string().min(1),
@@ -134,7 +139,7 @@ schedulesRouter.post(
   wrap(async (req, res) => {
     const body = adjustmentSchema.parse(req.body);
     const { scenario, anchorTime } = await loadScenario(req.params.scenarioId!);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(anchorTime, scenarioOrderIds(scenario.tasks));
     const result = applyAdjustment(scenario.tasks, {
       taskId: body.taskId,
       machineId: body.machineId,
@@ -169,7 +174,7 @@ schedulesRouter.post(
   wrap(async (req, res) => {
     const body = adjustmentSchema.parse(req.body);
     const { scenario, anchorTime } = await loadScenario(req.params.scenarioId!);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(anchorTime, scenarioOrderIds(scenario.tasks));
     const result = applyAdjustment(scenario.tasks, {
       taskId: body.taskId,
       machineId: body.machineId,
@@ -202,7 +207,7 @@ schedulesRouter.post(
   '/:scenarioId/recalculate',
   wrap(async (req, res) => {
     const { scenario, anchorTime } = await loadScenario(req.params.scenarioId!);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(anchorTime, scenarioOrderIds(scenario.tasks));
     const metrics = calculateMetrics({
       tasks: scenario.tasks,
       orders: input.orders,
@@ -222,7 +227,7 @@ schedulesRouter.post(
   wrap(async (req, res) => {
     const { scenario, anchorTime } = await loadScenario(req.params.scenarioId!);
     const baseline = await loadBaseline(scenario.scenarioId);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(anchorTime, scenarioOrderIds(scenario.tasks, baseline));
     const metrics = calculateMetrics({
       tasks: baseline,
       orders: input.orders,

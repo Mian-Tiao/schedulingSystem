@@ -47,7 +47,10 @@ simulationsRouter.post(
   wrap(async (req, res) => {
     const body = urgentSchema.parse(req.body);
     const { scenario, anchorTime } = await loadScenario(body.scenarioId);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(
+      anchorTime,
+      [...new Set(scenario.tasks.map((t) => t.orderId).filter((x): x is string => Boolean(x)))],
+    );
 
     const product = await prisma.product.findUnique({ where: { id: body.order.productId } });
     if (!product) throw notFound('產品');
@@ -119,7 +122,10 @@ simulationsRouter.post(
   wrap(async (req, res) => {
     const body = breakdownSchema.parse(req.body);
     const { scenario, anchorTime } = await loadScenario(body.scenarioId);
-    const input = await loadSchedulingInput(anchorTime);
+    const input = await loadSchedulingInput(
+      anchorTime,
+      [...new Set(scenario.tasks.map((t) => t.orderId).filter((x): x is string => Boolean(x)))],
+    );
     const machine = input.machines.find((m) => m.id === body.machineId);
     if (!machine) throw notFound('機台');
 
