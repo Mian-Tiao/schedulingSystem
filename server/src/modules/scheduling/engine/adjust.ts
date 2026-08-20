@@ -6,7 +6,7 @@
  * - 合法調整後,受影響機台的後續任務保持原順序、必要時往後推移。
  * - 換模/清洗在重排時緊接前一任務之後前向放置。
  */
-import { machineAvailability, findSlot, expandWorkingWindows, subtractIntervals } from './calendar.js';
+import { machineAvailability, findSlot, findSlots, expandWorkingWindows, subtractIntervals } from './calendar.js';
 import { resolveChangeover } from './changeover.js';
 import { maintenanceTasks } from './engine.js';
 import {
@@ -91,21 +91,26 @@ export function applyAdjustment(
   }
 
   const durationMs = minutesToMs(order.processingTime);
-  const newEnd = request.startTime + durationMs;
-
-  // 3. 工作時段與維護檢查:production 必須完整落在單一連續可用區段
+  // 3. 工作時段與維護檢查:production 可跨工作時段分段,但指定起點必須可生產
   const downtimeBlocks = input.downtimes
     .filter((d) => d.machineId === targetMachine.id)
     .map((d) => ({ start: d.startTime, end: d.endTime }));
   const windows = expandWorkingWindows(targetMachine.workingHours, input.anchorTime, horizonEnd);
   const windowsMinusDown = subtractIntervals(windows, downtimeBlocks);
-  const fitsWindow = windowsMinusDown.some((w) => w.start <= request.startTime && newEnd <= w.end);
-  if (!fitsWindow) {
-    const overlapsDowntime = downtimeBlocks.some((d) => d.start < newEnd && request.startTime < d.end);
-    const inWorkingHours = windows.some((w) => w.start <= request.startTime && newEnd <= w.end);
-    if (overlapsDowntime) errors.push('與機台維護或停機時段重疊');
-    else if (!inWorkingHours) errors.push('位於機台非工作時段,或跨越休息/下班時間(工作不可中斷)');
-    else errors.push('該時段無法連續完成此工作');
+  const startIsAvailable = windowsMinusDown.some(
+    (w) => w.start <= request.startTime && request.startTime < w.end,
+  );
+  const requestedSegments = findSlots(windowsMinusDown, request.startTime, durationMs);
+  if (!startIsAvailable || !requestedSegments || requestedSegments[0]?.start !== request.startTime) {
+    const startsDuringDowntime = downtimeBlocks.some(
+      (d) => d.start <= request.startTime && request.startTime < d.end,
+    );
+    const startsDuringWorkingHours = windows.some(
+      (w) => w.start <= request.startTime && request.startTime < w.end,
+    );
+    if (startsDuringDowntime) errors.push('開始時間位於機台維護或停機時段');
+    else if (!startsDuringWorkingHours) errors.push('開始時間位於機台非工作時段');
+    else errors.push('規劃期間內的剩餘工時不足以完成此工作');
   }
 
   if (errors.length > 0) return fail(errors);
@@ -119,10 +124,13 @@ export function applyAdjustment(
   const orderByIdMap = new Map(input.orders.map((o) => [o.id, o]));
 
   const seqByMachine = new Map<string, SeqEntry[]>();
+  const sequencedOrderIds = new Set<string>();
   for (const t of [...productionTasks].sort((a, b) => a.startTime - b.startTime)) {
     if (t.orderId === order.id) continue;
+    if (sequencedOrderIds.has(t.orderId!)) continue;
     const o = orderByIdMap.get(t.orderId!);
     if (!o) continue;
+    sequencedOrderIds.add(t.orderId!);
     const list = seqByMachine.get(t.machineId) ?? [];
     list.push({ order: o, desiredStart: t.startTime, isMoved: false });
     seqByMachine.set(t.machineId, list);
@@ -190,29 +198,32 @@ export function applyAdjustment(
       }
 
       const prodEarliest = Math.max(cursor, e.order.releaseTime, e.desiredStart);
-      const slot = findSlot(availability, prodEarliest, minutesToMs(e.order.processingTime));
-      if (!slot) {
+      const slots = findSlots(availability, prodEarliest, minutesToMs(e.order.processingTime));
+      if (!slots || slots.length === 0) {
         return fail([`重排後訂單 ${e.order.orderNumber} 無法在規劃期間內完成`]);
       }
-      if (e.isMoved && slot.start !== request.startTime) {
+      if (e.isMoved && slots[0]!.start !== request.startTime) {
         // 換模/前置任務擠壓,無法在指定時間開始
         return fail(['該位置與其他訂單重疊,或換模/清洗時間不足,無法於指定時間開始']);
       }
-      seqNo += 1;
-      newTasks.push({
-        id: `adj-${e.order.orderNumber}-production`,
-        orderId: e.order.id,
-        machineId,
-        taskType: 'production',
-        startTime: slot.start,
-        endTime: slot.end,
-        sequence: seqNo,
-        isManuallyAdjusted: e.isMoved,
+      slots.forEach((slot, index) => {
+        seqNo += 1;
+        const segmentSuffix = slots.length === 1 ? '' : `-${index + 1}`;
+        newTasks.push({
+          id: `adj-${e.order.orderNumber}-production${segmentSuffix}`,
+          orderId: e.order.id,
+          machineId,
+          taskType: 'production',
+          startTime: slot.start,
+          endTime: slot.end,
+          sequence: seqNo,
+          isManuallyAdjusted: e.isMoved,
+        });
+        busy.push({ start: slot.start, end: slot.end });
       });
-      busy.push({ start: slot.start, end: slot.end });
       lastProductId = e.order.productId;
-      lastEnd = slot.end;
-      newCompletion.set(e.order.id, slot.end);
+      lastEnd = slots[slots.length - 1]!.end;
+      newCompletion.set(e.order.id, lastEnd);
     }
   }
 

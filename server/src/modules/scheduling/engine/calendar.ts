@@ -125,6 +125,33 @@ export function findSlot(
   return null;
 }
 
+/**
+ * 從多個可用時段依序配置可分段的 production 工時。
+ * 休息、下班、維護或既有任務會形成自然斷點；總工時仍須在規劃期間內完成。
+ */
+export function findSlots(
+  availability: TimeInterval[],
+  earliest: number,
+  durationMs: number,
+): TimeInterval[] | null {
+  if (durationMs <= 0) {
+    const slot = findSlot(availability, earliest, 0);
+    return slot ? [slot] : null;
+  }
+
+  let remaining = durationMs;
+  const slots: TimeInterval[] = [];
+  for (const window of availability) {
+    const start = Math.max(window.start, earliest);
+    if (start >= window.end) continue;
+    const allocated = Math.min(remaining, window.end - start);
+    slots.push({ start, end: start + allocated });
+    remaining -= allocated;
+    if (remaining <= 0) return slots;
+  }
+  return null;
+}
+
 /** 機台在期間內的總可用分鐘數(工作時段 - 停機),不扣已占用 */
 export function machineCapacityMinutes(
   machine: Machine,

@@ -2,22 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../shared/db.js';
 import { AppError, wrap } from '../../shared/errors.js';
-import { logger } from '../../shared/logger.js';
 import { loadSchedulingInput, taskToJson } from '../../shared/mappers.js';
 import { applyAdjustment } from '../scheduling/engine/adjust.js';
 import type { ScheduleScenario } from '../scheduling/engine/types.js';
 import { calculateMetrics } from '../scheduling/metrics/metrics.js';
-import { runAllAlgorithms } from '../scheduling/runScheduling.js';
-import { loadBaseline, loadScenario, replaceScenarioTasks, saveScenarios } from './service.js';
-
-const objectiveSchema = z.enum([
-  'ON_TIME_DELIVERY',
-  'MIN_AVG_TARDINESS',
-  'MIN_MAKESPAN',
-  'MAX_UTILIZATION',
-  'MIN_CHANGEOVER',
-  'BALANCED',
-]);
+import { generateSchedules } from './generateService.js';
+import { loadBaseline, loadScenario, replaceScenarioTasks } from './service.js';
 
 export const schedulesRouter = Router();
 
@@ -46,61 +36,24 @@ function scenarioDetail(s: ScheduleScenario) {
 schedulesRouter.post(
   '/generate',
   wrap(async (req, res) => {
-    const body = z
-      .object({
-        objective: objectiveSchema,
-        machineIds: z.array(z.string().min(1)).optional(),
-        /** 測試用:固定排程起點以確保 deterministic */
-        anchorTime: z.string().datetime({ offset: true }).optional(),
-        horizonDays: z.number().int().min(1).max(365).optional(),
-      })
-      .parse(req.body);
-
-    const anchorTime = body.anchorTime ? Date.parse(body.anchorTime) : Date.now();
-    const input = await loadSchedulingInput(anchorTime);
-    if (body.horizonDays) input.horizonDays = body.horizonDays;
-    if (body.machineIds?.length) {
-      const selectedMachineIds = new Set(body.machineIds);
-      input.machines = input.machines.filter((m) => selectedMachineIds.has(m.id));
-      input.downtimes = input.downtimes.filter((d) => selectedMachineIds.has(d.machineId));
-      input.changeoverRules = input.changeoverRules.filter((r) => !r.machineId || selectedMachineIds.has(r.machineId));
-    }
-
-    const started = Date.now();
-    const batchId = `b${anchorTime}`;
-    const { scenarios, issues } = runAllAlgorithms(input, body.objective, batchId);
-    logger.info(
-      { batchId, orders: input.orders.length, machines: input.machines.length, ms: Date.now() - started },
-      'scheduling completed',
-    );
-
-    if (scenarios.length === 0) {
+    const result = await generateSchedules(req.body);
+    if (result.blocked) {
       res.status(422).json({
         error: {
           code: 'SCHEDULING_BLOCKED',
           message: '資料檢查未通過,無法執行排程',
-          details: issues,
+          details: result.issues,
         },
       });
       return;
     }
 
-    await saveScenarios(scenarios, batchId, anchorTime);
-    // 更新已被排入方案的訂單狀態
-    const scheduledOrderIds = new Set(
-      scenarios.flatMap((s) => s.tasks.filter((t) => t.orderId).map((t) => t.orderId!)),
-    );
-    await prisma.productionOrder.updateMany({
-      where: { id: { in: [...scheduledOrderIds] }, status: 'pending' },
-      data: { status: 'scheduled' },
-    });
-
     res.json({
-      batchId,
-      anchorTime: new Date(anchorTime).toISOString(),
-      issues,
-      scenarios: scenarios.map(scenarioSummary),
-      recommended: scenarios.filter((s) => s.rank <= 3).map((s) => s.scenarioId),
+      batchId: result.batchId,
+      anchorTime: new Date(result.anchorTime).toISOString(),
+      issues: result.issues,
+      scenarios: result.scenarios.map(scenarioSummary),
+      recommended: result.scenarios.filter((scenario) => scenario.rank <= 3).map((scenario) => scenario.scenarioId),
     });
   }),
 );

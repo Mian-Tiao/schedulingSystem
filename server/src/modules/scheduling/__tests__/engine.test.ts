@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAlgorithm } from '../engine/engine.js';
 import type { ScheduledTask } from '../engine/types.js';
+import { runAllAlgorithms } from '../runScheduling.js';
 import {
   changeoverRule,
   downtime,
@@ -70,6 +71,24 @@ describe('runAlgorithm — 排序邏輯', () => {
   });
 });
 
+describe('runAllAlgorithms — 空方案防護', () => {
+  it('規劃期間總工時不足時不產生空白方案', () => {
+    const pA = product({ id: 'pA' });
+    const m1 = machine({ id: 'm1', supportedProductIds: ['pA'] });
+    const longOrder = order({ id: 'long', productId: 'pA', processingTime: 600 });
+    const result = runAllAlgorithms(
+      input({ products: [pA], machines: [m1], orders: [longOrder], horizonDays: 1 }),
+      'ON_TIME_DELIVERY',
+      'empty-guard',
+    );
+
+    expect(result.scenarios).toHaveLength(0);
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ level: 'error', code: 'NO_SCHEDULED_TASKS' }),
+    );
+  });
+});
+
 describe('runAlgorithm — 機台分派與行事曆', () => {
   it('選擇最早完成的機台;負載會分散到多台機台', () => {
     const pA = product({ id: 'pA' });
@@ -114,19 +133,40 @@ describe('runAlgorithm — 機台分派與行事曆', () => {
     expect(productionOf(r.tasks, 'o1').startTime).toBe(t('2026-08-10 10:00'));
   });
 
-  it('non-preemptive:工作不可跨越午休', () => {
+  it('production 可跨越午休分段續做', () => {
     const pA = product({ id: 'pA' });
     const m1 = machine({ id: 'm1', supportedProductIds: ['pA'], workingHours: WITH_LUNCH });
     // 3 小時工作,08:00 開始只剩 4 小時的 08:00-12:00 可容納
     const o1 = order({ id: 'o1', productId: 'pA', processingTime: 180, createdAt: 1 });
-    // 第二張 3 小時放不進 12:00 前剩餘 1 小時 → 移到 13:00
+    // 第二張先做 11:00-12:00,午休後再做 13:00-15:00
     const o2 = order({ id: 'o2', productId: 'pA', processingTime: 180, createdAt: 2 });
     const r = runAlgorithm(
       input({ products: [pA], machines: [m1], orders: [o1, o2], anchorTime: t('2026-08-10 00:00') }),
       'FIFO',
     );
     expect(productionOf(r.tasks, 'o1').startTime).toBe(t('2026-08-10 08:00'));
-    expect(productionOf(r.tasks, 'o2').startTime).toBe(t('2026-08-10 13:00'));
+    const segments = r.tasks.filter((task) => task.orderId === 'o2' && task.taskType === 'production');
+    expect(segments).toMatchObject([
+      { startTime: t('2026-08-10 11:00'), endTime: t('2026-08-10 12:00') },
+      { startTime: t('2026-08-10 13:00'), endTime: t('2026-08-10 15:00') },
+    ]);
+    expect(segments.reduce((minutes, task) => minutes + (task.endTime - task.startTime) / 60_000, 0)).toBe(180);
+  });
+
+  it('長工單可跨下班與隔日分段完成', () => {
+    const pA = product({ id: 'pA' });
+    const m1 = machine({ id: 'm1', supportedProductIds: ['pA'] });
+    const longOrder = order({ id: 'long', productId: 'pA', processingTime: 600 });
+    const r = runAlgorithm(
+      input({ products: [pA], machines: [m1], orders: [longOrder], anchorTime: t('2026-08-10 00:00') }),
+      'FIFO',
+    );
+    const segments = r.tasks.filter((task) => task.orderId === 'long' && task.taskType === 'production');
+    expect(segments).toMatchObject([
+      { startTime: t('2026-08-10 08:00'), endTime: t('2026-08-10 17:00') },
+      { startTime: t('2026-08-11 08:00'), endTime: t('2026-08-11 09:00') },
+    ]);
+    expect(r.unscheduledOrders).toHaveLength(0);
   });
 
   it('release time 之前不開始', () => {

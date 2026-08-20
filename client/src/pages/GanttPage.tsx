@@ -69,6 +69,11 @@ export function GanttPage() {
       useGanttStore.getState().init(scenario.tasks);
       setDiff(null);
       setMessage(null);
+      const starts = scenario.tasks.map((task) => Date.parse(task.startTime));
+      const ends = scenario.tasks.map((task) => Date.parse(task.endTime));
+      const span = starts.length > 0 ? Math.max(...ends) - Math.min(...starts) : 0;
+      setScaleIdx(span > 2 * 24 * 3600_000 ? 2 : 1);
+      setZoom(1);
     }
     // 依 scenarioId/generatedAt 重新初始化即可,不需監聽整個 scenario 物件
   }, [scenario?.scenarioId, scenario?.generatedAt]);
@@ -118,7 +123,45 @@ export function GanttPage() {
     );
   if (isLoading || !scenario) return <Loading text="載入排程中…" />;
   if (error) return <ErrorState message={(error as Error).message} />;
-  if (!timeRange) return <EmptyState text="此方案沒有任務。" />;
+  if (!timeRange) {
+    const unscheduled = scenario.unscheduledOrders ?? [];
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow="SCHEDULE TIMELINE"
+          title="甘特圖排程"
+          description="目前方案沒有可顯示的生產任務，請先處理未排入原因。"
+          actions={
+            <select
+              className="app-input !w-auto min-w-44"
+              value={scenario.scenarioId}
+              onChange={(event) => navigate(`/gantt/${event.target.value}`)}
+            >
+              {(scenarios ?? []).map((item) => (
+                <option key={item.scenarioId} value={item.scenarioId}>
+                  {item.algorithm} 方案(第 {item.rank} 名)
+                </option>
+              ))}
+            </select>
+          }
+        />
+        {unscheduled.length > 0 && (
+          <Banner tone="warn">
+            {unscheduled.map((order) => `${order.orderNumber}:${order.reason}`).join('；')}
+          </Banner>
+        )}
+        <EmptyState
+          text="這次排程沒有產生任何任務。請檢查可加工機台、規劃期間與工作時段後重新排程。"
+          action={
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => navigate('/orders')}>管理訂單</Button>
+              <Button onClick={() => navigate('/schedule')}>回排程中心</Button>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
 
   const totalMin = (timeRange.end - timeRange.start) / 60_000;
   const chartW = totalMin * pxPerMin;
@@ -294,7 +337,7 @@ export function GanttPage() {
       />
       <PageMetrics
         items={[
-          { label: '生產任務', value: productionTaskCount, detail: '目前方案工作數', tone: 'blue' },
+          { label: '生產區段', value: productionTaskCount, detail: '跨班次會拆成多段', tone: 'blue' },
           { label: '換模／清洗', value: supportTaskCount, detail: '支援作業', tone: supportTaskCount > 0 ? 'amber' : 'default' },
           { label: '排程機台', value: machineRows.length, detail: '時間軸列數', tone: 'green' },
           { label: '準時交貨率', value: pct(scenario.metrics.onTimeDeliveryRate), detail: `${scenario.metrics.lateOrderCount} 張延遲`, tone: scenario.metrics.lateOrderCount > 0 ? 'red' : 'green' },

@@ -151,7 +151,20 @@ export function insertUrgentOrder(
   };
   push('cleaning', best.placement.cleaningStart, best.placement.cleaningEnd);
   push('setup', best.placement.setupStart, best.placement.setupEnd);
-  push('production', best.placement.productionStart, best.placement.productionEnd);
+  best.placement.productionSegments.forEach((segment, index) => {
+    seq += 1;
+    const segmentSuffix = best.placement.productionSegments.length === 1 ? '' : `-${index + 1}`;
+    newTasks.push({
+      id: `urgent-${urgent.orderNumber}-production${segmentSuffix}`,
+      orderId: urgent.id,
+      machineId: best.state.machine.id,
+      taskType: 'production',
+      startTime: segment.start,
+      endTime: segment.end,
+      sequence: seq,
+      isManuallyAdjusted: false,
+    });
+  });
 
   return {
     ok: true,

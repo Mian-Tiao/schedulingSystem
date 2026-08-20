@@ -7,7 +7,7 @@ import { eddComparator } from '../algorithms/edd.js';
 import { fifoComparator } from '../algorithms/fifo.js';
 import { sptComparator } from '../algorithms/spt.js';
 import type { OrderComparator } from '../algorithms/shared.js';
-import { findSlot, machineAvailability } from './calendar.js';
+import { findSlot, findSlots, machineAvailability } from './calendar.js';
 import { resolveChangeover } from './changeover.js';
 import {
   minutesToMs,
@@ -134,8 +134,10 @@ export function computePlacement(
   }
 
   const prodEarliest = Math.max(cursor, order.releaseTime);
-  const prodSlot = findSlot(availability, prodEarliest, minutesToMs(order.processingTime));
-  if (!prodSlot) return null;
+  const productionSegments = findSlots(availability, prodEarliest, minutesToMs(order.processingTime));
+  if (!productionSegments || productionSegments.length === 0) return null;
+  const firstSegment = productionSegments[0]!;
+  const lastSegment = productionSegments[productionSegments.length - 1]!;
 
   return {
     machineId: machine.id,
@@ -143,8 +145,9 @@ export function computePlacement(
     cleaningEnd,
     setupStart,
     setupEnd,
-    productionStart: prodSlot.start,
-    productionEnd: prodSlot.end,
+    productionStart: firstSegment.start,
+    productionEnd: lastSegment.end,
+    productionSegments,
     setupMinutes: changeover.setupMinutes,
     cleaningMinutes: changeover.cleaningMinutes,
   };
@@ -211,17 +214,20 @@ export function commitPlacement(
     });
     state.busy.push({ start: placement.setupStart, end: placement.setupEnd });
   }
-  tasks.push({
-    id: `${idPrefix}-${order.orderNumber}-production`,
-    orderId: order.id,
-    machineId: state.machine.id,
-    taskType: 'production',
-    startTime: placement.productionStart,
-    endTime: placement.productionEnd,
-    sequence: nextSeq(),
-    isManuallyAdjusted: false,
+  placement.productionSegments.forEach((segment, index) => {
+    const segmentSuffix = placement.productionSegments.length === 1 ? '' : `-${index + 1}`;
+    tasks.push({
+      id: `${idPrefix}-${order.orderNumber}-production${segmentSuffix}`,
+      orderId: order.id,
+      machineId: state.machine.id,
+      taskType: 'production',
+      startTime: segment.start,
+      endTime: segment.end,
+      sequence: nextSeq(),
+      isManuallyAdjusted: false,
+    });
+    state.busy.push({ start: segment.start, end: segment.end });
   });
-  state.busy.push({ start: placement.productionStart, end: placement.productionEnd });
   state.busy.sort((a, b) => a.start - b.start);
   state.lastProductId = order.productId;
   state.lastEnd = placement.productionEnd;

@@ -5,6 +5,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { executeReadTool, preparePendingAction } from '../modules/ai/tools.js';
 import { prisma } from '../shared/db.js';
 
 const app = createApp();
@@ -325,6 +326,8 @@ describe('AI 停用時', () => {
   it('status 回報停用,chat 回傳 503,核心功能不受影響', async () => {
     const status = await request(app).get('/api/ai/status');
     expect(status.body.enabled).toBe(false);
+    expect(status.body.provider).toBe('gemini');
+    expect(status.body.model).toBe('gemini-3.6-flash');
 
     const chat = await request(app).post('/api/ai/chat').send({ question: '哪台機台是瓶頸?' });
     expect(chat.status).toBe(503);
@@ -334,6 +337,65 @@ describe('AI 停用時', () => {
     const schedules = await request(app).get('/api/schedules');
     expect(schedules.status).toBe(200);
     expect(schedules.body).toHaveLength(4);
+  });
+});
+
+describe('AI 工具確認流程', () => {
+  it('讀取工具只能查詢白名單資料', async () => {
+    const result = (await executeReadTool({ name: 'list_products', args: { search: 'TP-A' } })) as {
+      productCode: string;
+    }[];
+    expect(result).toHaveLength(1);
+    expect(result[0]?.productCode).toBe('TP-A');
+
+    await expect(executeReadTool({ name: 'delete_everything', args: {} })).rejects.toMatchObject({
+      code: 'AI_TOOL_NOT_ALLOWED',
+    });
+  });
+
+  it('新增訂單必須先確認,且同一操作只能執行一次', async () => {
+    const pending = await preparePendingAction({
+      name: 'create_order',
+      args: {
+        orderNumber: 'TO-AI-001',
+        product: 'TP-A',
+        quantity: 5,
+        releaseTime: '2026-08-10T08:00:00+08:00',
+        dueDate: '2026-08-11T17:00:00+08:00',
+        priority: 4,
+      },
+    });
+
+    expect(await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-001' } })).toBeNull();
+
+    const confirmed = await request(app).post(`/api/ai/actions/${pending.id}/confirm`).send({});
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.answer).toContain('TO-AI-001');
+    expect(await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-001' } })).not.toBeNull();
+
+    const repeated = await request(app).post(`/api/ai/actions/${pending.id}/confirm`).send({});
+    expect(repeated.status).toBe(404);
+    expect(await prisma.productionOrder.count({ where: { orderNumber: 'TO-AI-001' } })).toBe(1);
+  });
+
+  it('取消確認後不會寫入資料', async () => {
+    const pending = await preparePendingAction({
+      name: 'create_order',
+      args: {
+        orderNumber: 'TO-AI-CANCEL',
+        product: 'TP-A',
+        quantity: 2,
+        releaseTime: '2026-08-10T08:00:00+08:00',
+        dueDate: '2026-08-12T17:00:00+08:00',
+      },
+    });
+    const cancelled = await request(app).post(`/api/ai/actions/${pending.id}/cancel`).send({});
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.cancelled).toBe(true);
+
+    const confirmed = await request(app).post(`/api/ai/actions/${pending.id}/confirm`).send({});
+    expect(confirmed.status).toBe(404);
+    expect(await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-CANCEL' } })).toBeNull();
   });
 });
 

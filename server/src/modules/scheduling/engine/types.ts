@@ -167,6 +167,8 @@ export interface Placement {
   setupEnd: number | null;
   productionStart: number;
   productionEnd: number;
+  /** production 可跨越休息、下班與維護時段分段續做 */
+  productionSegments: { start: number; end: number }[];
   setupMinutes: number;
   cleaningMinutes: number;
 }

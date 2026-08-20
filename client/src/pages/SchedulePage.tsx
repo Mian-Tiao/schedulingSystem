@@ -81,9 +81,15 @@ export function SchedulePage() {
       setSetupCollapsed(true); // 執行成功後收合設置區,把版面還給決策內容
     } catch (e) {
       if (e instanceof ApiError) {
-        setGenError(e.message);
         const details = e.details as { level: string; message: string }[] | undefined;
-        if (Array.isArray(details)) setIssues(details);
+        if (Array.isArray(details) && details.length > 0) {
+          const errors = details.filter((detail) => detail.level === 'error');
+          const warnings = details.filter((detail) => detail.level !== 'error');
+          setGenError(errors.map((detail) => detail.message).join('；') || e.message);
+          setIssues(warnings);
+        } else {
+          setGenError(e.message);
+        }
       } else {
         setGenError(e instanceof Error ? e.message : '排程執行失敗,請稍後再試');
       }
@@ -266,7 +272,7 @@ export function SchedulePage() {
       </div>
 
       {/* 執行提示與警告(收合後仍需可見,故置於設置區之外) */}
-      {genError && <ErrorState message={genError} />}
+      {genError && <ErrorState title="無法執行排程" message={genError} />}
       {issues.map((i, idx) => (
         <Banner key={idx} tone={i.level === 'error' ? 'error' : 'warn'}>
           {i.message}

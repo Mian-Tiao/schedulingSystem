@@ -15,12 +15,20 @@ export async function syncOrderStatuses(now: Date = new Date()) {
   const inProgressIds: string[] = [];
   const completedIds: string[] = [];
 
-  for (const t of topScenario.tasks) {
-    if (!t.orderId) continue;
-    if (t.endTime <= now) {
-      completedIds.push(t.orderId);
-    } else if (t.startTime <= now) {
-      inProgressIds.push(t.orderId);
+  const tasksByOrder = new Map<string, typeof topScenario.tasks>();
+  for (const task of topScenario.tasks) {
+    if (!task.orderId) continue;
+    const tasks = tasksByOrder.get(task.orderId) ?? [];
+    tasks.push(task);
+    tasksByOrder.set(task.orderId, tasks);
+  }
+
+  for (const [orderId, tasks] of tasksByOrder) {
+    const completion = new Date(Math.max(...tasks.map((task) => task.endTime.getTime())));
+    if (completion <= now) {
+      completedIds.push(orderId);
+    } else if (tasks.some((task) => task.startTime <= now && now < task.endTime)) {
+      inProgressIds.push(orderId);
     }
   }
 

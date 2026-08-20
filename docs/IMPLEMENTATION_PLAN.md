@@ -89,7 +89,7 @@ schedulingSystem/
 
 1. **甘特圖拖曳互動複雜度**:自製元件需處理縮放、吸附、跨機台拖曳;以「候選位置驗證 API」把合法性判斷放後端,前端只做樂觀預覽。
 2. **CR 動態重算**:模擬時間推進定義需一致,否則不 deterministic;以引擎內單一時鐘來源解決。
-3. **Non-preemptive + 工作時段**:長訂單可能塞不進任何連續區段 → 明確錯誤訊息(可開始時間找不到)。
+3. **跨工作時段的長訂單**:production 依可用時段切成多段,setup/cleaning 仍維持單一連續區段;績效以最後一段完成時間計算。
 4. **SQLite 併發**:MVP 單人使用,可接受;repository 層隔離方便換 PostgreSQL。
 5. **AI 幻覺**:只餵結構化 JSON、system prompt 禁止捏造、回答須引用數據;AI 掛掉不影響核心。
 6. **100 訂單 × 10 機台效能**:greedy 演算法 O(n·m·windows),遠低於秒級;seed 加壓力測試驗證。

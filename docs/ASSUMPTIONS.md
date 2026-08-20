@@ -15,7 +15,7 @@
 6. `Machine.workingHours` 結構:`{ mon..sun: [{start:"08:00", end:"17:00"}] }`,空陣列 = 當日不工作。
 7. 「休息時間」以工作時段切割表達(例:08:00-12:00 與 13:00-17:00 = 中午休息),不另設 break 實體;每週重複的休息(如週一午休)也可用 `plannedStop` downtime 表達。
 8. `status = maintenance` 的機台仍可排程,但其 downtime 時段會被避開;`disabled` 機台完全排除。
-9. production 任務不可跨越非工作時段(non-preemptive,須完整落在單一連續可用區段);setup/cleaning 同樣須落在可用區段內,且緊鄰其 production 任務之前(setup 先、cleaning 次之——採「先清洗後換模」順序:cleaning 完成前一產品殘留、setup 換新模具。實作採 setup 與 cleaning 連續排列,順序為 cleaning → setup → production)。
+9. production 總工時可跨午休、下班、維護與隔日分段續做,每一段必須落在機台可用時段內;setup/cleaning 不可中斷,須落在單一可用區段內,並在 production 前依 cleaning → setup → production 排列。
 10. 機台「前一個產品」狀態:每個 scenario 排程開始時機台視為空機(無前產品),第一張訂單只需 setup(採規格 ChangeoverRule 之 fromProductId 可為 null 表「空機→產品」;若無規則,空機首單不加 setup)。
 
 ## 換模規則

@@ -167,7 +167,10 @@ export const useDashboard = () =>
 
 // ---- AI ----
 export const useAiStatus = () =>
-  useQuery({ queryKey: ['ai-status'], queryFn: () => apiGet<{ enabled: boolean }>('/api/ai/status') });
+  useQuery({
+    queryKey: ['ai-status'],
+    queryFn: () => apiGet<{ enabled: boolean; provider: 'gemini'; model: string }>('/api/ai/status'),
+  });
 
 // ---- BOM ----
 export const useBom = (productId: string | null) =>

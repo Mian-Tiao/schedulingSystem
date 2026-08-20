@@ -43,6 +43,28 @@ export function runAllAlgorithms(
     return { ...r, metrics };
   });
 
+  const hasProductionTask = results.some((result) =>
+    result.tasks.some((task) => task.taskType === 'production'),
+  );
+  if (!hasProductionTask) {
+    const reasons = [
+      ...new Set(results.flatMap((result) => result.unscheduledOrders.map((order) => order.reason))),
+    ];
+    return {
+      scenarios: [],
+      issues: [
+        ...issues,
+        {
+          level: 'error',
+          code: 'NO_SCHEDULED_TASKS',
+          message: reasons.length
+            ? `沒有任何訂單能排入甘特圖:${reasons.join('、')}`
+            : '沒有任何訂單能排入甘特圖',
+        },
+      ],
+    };
+  }
+
   const ranking = rankScenarios(
     results.map((r) => ({ algorithm: r.algorithm, metrics: r.metrics })),
     objective,

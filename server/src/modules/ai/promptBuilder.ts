@@ -10,12 +10,17 @@ export const SYSTEM_PROMPT = `你是一套生產排程決策輔助系統的分�
 嚴格遵守以下規則:
 1. 你只能根據使用者訊息中提供的結構化 JSON 數據回答,絕對不可以捏造任何訂單、時間、機台或績效數據。
 2. 排程結果由系統的排程引擎(deterministic scheduling engine)產生,你不負責重新排程,只負責解釋與提供建議。
-3. 回答必須引用 JSON 中的實際數據(例如「準時交貨率由 65% 提升至 88%」),不可以只給結論。
-4. 說明建議時必須同時講清楚:優點、缺點、可能的代價。
+3. 先直接回答使用者的問題,再引用 1 至 3 個最關鍵的實際數據支持結論;不要重述問題或完整盤點所有數據。
+4. 提供建議時只說明最重要的理由與一項風險;只有使用者要求「詳細分析」「完整比較」或明確詢問取捨時,才展開優點、缺點與代價。
 5. 若 JSON 中沒有回答問題所需的資料,直接明確說明缺少哪些資料,不要猜測。
 6. 使用非技術人員容易理解的繁體中文,避免術語;必要時用一句話解釋術語(例如 Makespan = 全部訂單做完所需的總時間)。
-7. 你的建議不會直接修改排程;提醒使用者確認後才套用。
-8. 數值請適當換算為易讀單位(分鐘 → 小時/天),但要保留原始數字。`;
+7. 數值請適當換算為易讀單位(分鐘 → 小時/天),但要保留原始數字。
+8. 預設回答控制在 120 至 300 個中文字內、最多 5 個短項目;複雜的四方案比較最多 500 字。只有使用者明確要求詳細內容時才可超過。
+9. 不要寒暄、不要自我介紹、不要寫冗長前言或結尾提醒。
+10. 前端以純文字顯示,禁止輸出 Markdown 語法或表格,包括 #、**、---;可使用簡短編號或「•」分點。
+11. 使用者要求查詢系統資料時優先呼叫讀取工具;要求新增訂單或執行排程時必須呼叫對應工具,不可只用文字假裝已完成。
+12. 每次最多提出一個寫入工具呼叫。寫入操作會由 Server 顯示確認卡,在收到工具執行結果前絕對不可宣稱操作成功。
+13. 工具缺少必要欄位時,用一句話詢問缺少的資料,不可自行猜測訂單編號、產品、數量或交期。`;
 
 export interface AiContext {
   objectiveLabel: string;
@@ -48,6 +53,11 @@ export interface AiContext {
   changeoverSummary: { setupCount: number; cleaningCount: number };
   unscheduledOrders: { orderNumber: string; reason: string }[];
   manualAdjustments: { note: string } | null;
+}
+
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  text: string;
 }
 
 const OBJECTIVE_LABELS: Record<string, string> = {
@@ -152,19 +162,29 @@ export async function buildAiContext(): Promise<AiContext | null> {
 
 /** 將額外情境(急單/故障模擬結果)與問題組成 user message */
 export function buildUserMessage(
-  context: AiContext,
+  context: AiContext | null,
   question: string,
   extraContext?: unknown,
+  history: ConversationTurn[] = [],
 ): string {
-  const payload: Record<string, unknown> = {
-    排程目標: context.objectiveLabel,
-    方案列表: context.scenarios,
-    延遲訂單: context.lateOrders,
-    機台負載: context.machineLoads,
-    換模與清洗次數: context.changeoverSummary,
-    無法排入的訂單: context.unscheduledOrders,
-    人工調整: context.manualAdjustments,
-  };
+  const payload: Record<string, unknown> = context
+    ? {
+        排程目標: context.objectiveLabel,
+        方案列表: context.scenarios,
+        延遲訂單: context.lateOrders,
+        機台負載: context.machineLoads,
+        換模與清洗次數: context.changeoverSummary,
+        無法排入的訂單: context.unscheduledOrders,
+        人工調整: context.manualAdjustments,
+      }
+    : { 排程狀態: '目前尚未產生排程方案' };
   if (extraContext) payload['情境模擬'] = extraContext;
-  return `以下是目前系統的真實排程數據(JSON):\n${JSON.stringify(payload, null, 2)}\n\n使用者的問題:${question}`;
+  if (history.length > 0) payload['最近對話'] = history;
+  const now = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Taipei',
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    hour12: false,
+  }).format(new Date());
+  return `台灣目前時間:${now} (UTC+8)\n以下是目前系統的真實排程數據(JSON):\n${JSON.stringify(payload, null, 2)}\n\n使用者的問題:${question}`;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   expandWorkingWindows,
   findSlot,
+  findSlots,
   machineAvailability,
   machineCapacityMinutes,
   mergeIntervals,
@@ -78,6 +79,24 @@ describe('findSlot', () => {
   });
   it('放不下回傳 null', () => {
     expect(findSlot(avail, 0, 500)).toBeNull();
+  });
+});
+
+describe('findSlots', () => {
+  const avail = [
+    { start: 100, end: 200 },
+    { start: 300, end: 500 },
+  ];
+
+  it('可跨多個可用時段分段完成', () => {
+    expect(findSlots(avail, 150, 180)).toEqual([
+      { start: 150, end: 200 },
+      { start: 300, end: 430 },
+    ]);
+  });
+
+  it('總可用工時不足時回傳 null', () => {
+    expect(findSlots(avail, 150, 300)).toBeNull();
   });
 });
 

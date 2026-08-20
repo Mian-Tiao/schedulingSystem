@@ -195,12 +195,18 @@ export function EmptyState({ text, action }: { text: string; action?: ReactNode 
   );
 }
 
-export function ErrorState({ message }: { message: string }) {
+export function ErrorState({
+  message,
+  title = '資料載入失敗',
+}: {
+  message: string;
+  title?: string;
+}) {
   return (
     <div className="app-error-state">
       <span aria-hidden>!</span>
       <div>
-        <strong>資料載入失敗</strong>
+        <strong>{title}</strong>
         <p>{message}</p>
       </div>
     </div>
