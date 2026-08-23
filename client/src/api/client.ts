@@ -33,6 +33,16 @@ async function handle<T>(res: Response): Promise<T> {
 
 import { tryMockRequest } from './mock';
 
+/**
+ * API 主機位址。
+ * - 本機開發:VITE_API_URL 未設 → 空字串 → 用相對路徑 /api,走 Vite proxy 到 localhost:3001。
+ * - 正式部署:在前端 build 時設 VITE_API_URL=後端網址(例:https://xxx.onrender.com)。
+ */
+const API_BASE = ((import.meta.env as Record<string, string | undefined>).VITE_API_URL ?? '').replace(/\/$/, '');
+function withBase(url: string): string {
+  return url.startsWith('/api') ? API_BASE + url : url;
+}
+
 export async function apiGet<T>(url: string): Promise<T> {
   try {
     const { handled, data } = tryMockRequest('GET', url);
@@ -40,7 +50,7 @@ export async function apiGet<T>(url: string): Promise<T> {
   } catch (error: unknown) {
     throw new ApiError('MOCK_ERROR', error instanceof Error ? error.message : '模擬 API 發生未知錯誤', 400);
   }
-  return handle(await fetch(url));
+  return handle(await fetch(withBase(url)));
 }
 
 export async function apiSend<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -51,7 +61,7 @@ export async function apiSend<T>(method: string, url: string, body?: unknown): P
     throw new ApiError('MOCK_ERROR', error instanceof Error ? error.message : '模擬 API 發生未知錯誤', 400);
   }
   return handle(
-    await fetch(url, {
+    await fetch(withBase(url), {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),

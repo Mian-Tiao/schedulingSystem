@@ -45,6 +45,14 @@ const WEEKDAY_NO_BREAK = {
 async function main() {
   const base = todayTaipei();
 
+  // 冪等:資料庫已有資料就跳過,讓 Render 每次重新部署時不會清空使用者的資料。
+  // 要強制重新灌入示範資料,執行:FORCE_SEED=1 npm run db:seed
+  const existing = await prisma.product.count();
+  if (existing > 0 && process.env.FORCE_SEED !== '1') {
+    console.log(`已有 ${existing} 筆產品資料,略過 seed(要強制重灌請設 FORCE_SEED=1)`);
+    return;
+  }
+
   // 清空既有資料
   await prisma.scheduledTask.deleteMany();
   await prisma.scheduleScenario.deleteMany();

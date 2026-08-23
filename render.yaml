@@ -1,0 +1,50 @@
+# Render 一鍵部署藍圖(Blueprint)
+# 到 Render → New → Blueprint → 連結這個 repo,Render 會自動讀這個檔建立:
+#   1. 一個免費 PostgreSQL 資料庫
+#   2. 後端 API(Node Web Service)
+#   3. 前端(Static Site)
+# 部署後請看 docs/DEPLOY.md 完成「填 VITE_API_URL」「首次資料」「AI key」三個收尾動作。
+
+databases:
+  - name: scheduling-db
+    plan: free
+    databaseName: scheduling
+    user: scheduling
+
+services:
+  # ---- 後端 API ----
+  - type: web
+    name: scheduling-api
+    runtime: node
+    plan: free
+    rootDir: server
+    # render:build 會:切換 Prisma provider 為 postgresql → 建表 → 編譯 → (冪等)灌示範資料
+    buildCommand: npm install && npm run render:build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: scheduling-db
+          property: connectionString
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash # ← 改成你實際要用的型號
+      - key: GEMINI_API_KEY
+        sync: false # 平常留空 = AI 關閉;要 demo AI 時才在 Dashboard 填,demo 完清掉
+
+  # ---- 前端(靜態網站)----
+  - type: web
+    name: scheduling-web
+    runtime: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # 指向後端網址。部署後若後端實際網址不同,回來改成正確的再 redeploy 前端。
+      - key: VITE_API_URL
+        value: https://scheduling-api.onrender.com
+    routes:
+      # SPA(react-router):所有路徑都回 index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html
