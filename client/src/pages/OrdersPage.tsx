@@ -436,6 +436,28 @@ export function OrdersPage() {
             第一列為標題,必要欄位:orderNumber, productCode, quantity, releaseTime, dueDate;
             選填:processingTime, priority, eligibleMachineCodes(以分號分隔), notes。時間格式:2026-08-10T08:00:00+08:00
           </Banner>
+          <div className="flex items-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              選擇 CSV 檔案
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    setCsvText(typeof reader.result === 'string' ? reader.result : '');
+                    setCsvResult(null);
+                  };
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <span className="text-xs text-slate-500">或直接把內容貼到下方欄位</span>
+          </div>
           <textarea
             className={`${inputCls} h-40 font-mono text-xs`}
             placeholder={'orderNumber,productCode,quantity,releaseTime,dueDate,processingTime,priority\nPO-100,P-A,20,2026-08-10T08:00:00+08:00,2026-08-12T17:00:00+08:00,,3'}
