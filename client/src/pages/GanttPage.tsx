@@ -14,7 +14,8 @@ import { Badge, Banner, Button, EmptyState, ErrorState, Loading, Modal, PageHead
 import { useGanttStore, type AdjustmentRecord } from '../stores/ganttStore';
 import type { Machine, Metrics, Task } from '../types';
 import { TASK_TYPE_LABELS } from '../types';
-import { fmtDateTime, fmtMinutes, fmtTime, pct } from '../utils/time';
+import { downloadCsv, excelText, fileStamp } from '../utils/exportCsv';
+import { fmtDateTime, fmtDateTimeFull, fmtMinutes, fmtTime, pct } from '../utils/time';
 
 const ROW_H = 46;
 const HEADER_H = 44;
@@ -312,6 +313,37 @@ export function GanttPage() {
   const productionTaskCount = tasks.filter((task) => task.taskType === 'production').length;
   const supportTaskCount = tasks.length - productionTaskCount;
 
+  const exportSchedule = () => {
+    const machineById = new Map(machineRows.map((m) => [m.id, m]));
+    const rows: (string | number)[][] = [
+      ['訂單編號', '產品', '機台', '作業類型', '開始時間', '結束時間', '時長(分鐘)', '交期', '是否逾期'],
+    ];
+    const sorted = [...tasks].sort((a, b) => {
+      const ma = machineById.get(a.machineId)?.machineCode ?? '';
+      const mb = machineById.get(b.machineId)?.machineCode ?? '';
+      return ma === mb ? Date.parse(a.startTime) - Date.parse(b.startTime) : ma.localeCompare(mb);
+    });
+    for (const t of sorted) {
+      const order = t.orderId ? orderById.get(t.orderId) : null;
+      const product = order ? productById.get(order.productId) : null;
+      const machine = machineById.get(t.machineId);
+      const late = order && t.taskType === 'production' && Date.parse(t.endTime) > Date.parse(order.dueDate);
+      rows.push([
+        order?.orderNumber ?? '',
+        product ? `${product.productCode} ${product.productName}` : '',
+        machine ? `${machine.machineCode} ${machine.machineName}` : t.machineId,
+        TASK_TYPE_LABELS[t.taskType],
+        excelText(fmtDateTimeFull(t.startTime)),
+        excelText(fmtDateTimeFull(t.endTime)),
+        Math.round((Date.parse(t.endTime) - Date.parse(t.startTime)) / 60_000),
+        order ? excelText(fmtDateTimeFull(order.dueDate)) : '',
+        t.taskType === 'production' ? (late ? '逾期' : '準時') : '—',
+      ]);
+    }
+    const suffix = scenario.isManuallyAdjusted ? '_已調整' : '';
+    downloadCsv(`排程結果_${scenario.algorithm}${suffix}_${fileStamp()}`, rows);
+  };
+
   return (
     <div className="gantt-page space-y-5">
       <PageHeader
@@ -366,6 +398,11 @@ export function GanttPage() {
           <Button variant="secondary" onClick={doReset} disabled={busy} title="回復系統原始排程">
             ⟲ 回復原始排程
           </Button>
+          <span className="ml-auto">
+            <Button variant="secondary" onClick={exportSchedule} title="匯出目前排程為 CSV(含手動調整)">
+              ⬇ 匯出排程(CSV)
+            </Button>
+          </span>
         </div>
       </div>
 

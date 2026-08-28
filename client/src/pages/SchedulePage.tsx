@@ -6,6 +6,7 @@ import { pickMinimumMachines, type MockGenerateResult } from '../api/mock/schedu
 import { Badge, Banner, Button, EmptyState, ErrorState, Loading } from '../components/ui';
 import type { ObjectiveId, ScenarioSummary } from '../types';
 import { OBJECTIVE_LABELS } from '../types';
+import { downloadCsv, fileStamp } from '../utils/exportCsv';
 import { fmtDateTime } from '../utils/time';
 import { GanttPreview } from './GanttPreview';
 import { METRIC_ROWS, buildAdvice, cardHighlight, splitMetrics, type MetricRow } from './scheduleLogic';
@@ -116,6 +117,17 @@ export function SchedulePage() {
     previewId && previewable.some((s) => s.scenarioId === previewId)
       ? previewId
       : previewable.find((s) => s.rank === 1)?.scenarioId ?? previewable[0]?.scenarioId ?? null;
+
+  const exportComparison = () => {
+    const rows: (string | number)[][] = [];
+    rows.push(['方案(演算法)', ...list.map((s) => s.algorithm)]);
+    rows.push(['排名', ...list.map((s) => `第 ${s.rank} 名`)]);
+    rows.push(['綜合分數', ...list.map((s) => s.score)]);
+    for (const row of METRIC_ROWS) {
+      rows.push([row.label, ...list.map((s) => row.fmt(s.metrics[row.key]))]);
+    }
+    downloadCsv(`方案績效比較_${fileStamp()}`, rows);
+  };
 
   const renderMetricRow = (row: MetricRow) => {
     const values = list.map((s) => s.metrics[row.key]);
@@ -369,7 +381,12 @@ export function SchedulePage() {
           )}
 
           <section className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="mb-1 text-sm font-semibold text-slate-700">4. 方案績效比較</h2>
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-700">4. 方案績效比較</h2>
+              <Button variant="secondary" onClick={exportComparison}>
+                ⬇ 匯出績效比較(CSV)
+              </Button>
+            </div>
             <p className="mb-3 text-xs text-slate-400">
               預設只顯示各方案「有明顯差異」的決定性指標;三方案表現相近的項目可展開查看。
             </p>

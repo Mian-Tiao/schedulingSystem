@@ -4,10 +4,11 @@
  */
 import { useMemo } from 'react';
 import { useMachines, useOrders, useProducts, useScenarioDetail } from '../api/hooks';
-import { Badge, Loading } from '../components/ui';
+import { Badge, Button, Loading } from '../components/ui';
 import type { Machine, Task } from '../types';
 import { TASK_TYPE_LABELS } from '../types';
-import { fmtDateTime, fmtMinutes, fmtTime } from '../utils/time';
+import { downloadCsv, excelText, fileStamp } from '../utils/exportCsv';
+import { fmtDateTime, fmtDateTimeFull, fmtMinutes, fmtTime } from '../utils/time';
 
 const ROW_H = 34;
 const HEADER_H = 34;
@@ -87,6 +88,36 @@ export function GanttPreview({ scenarioId }: { scenarioId: string }) {
   const now = Date.now();
   const showNow = now >= timeRange.start && now <= timeRange.end;
 
+  const machineById = new Map(machineRows.map((m) => [m.id, m]));
+  const exportSchedule = () => {
+    const rows: (string | number)[][] = [
+      ['訂單編號', '產品', '機台', '作業類型', '開始時間', '結束時間', '時長(分鐘)', '交期', '是否逾期'],
+    ];
+    const sorted = [...tasks].sort((a, b) => {
+      const ma = machineById.get(a.machineId)?.machineCode ?? '';
+      const mb = machineById.get(b.machineId)?.machineCode ?? '';
+      return ma === mb ? Date.parse(a.startTime) - Date.parse(b.startTime) : ma.localeCompare(mb);
+    });
+    for (const t of sorted) {
+      const order = t.orderId ? orderById.get(t.orderId) : null;
+      const product = order ? productById.get(order.productId) : null;
+      const machine = machineById.get(t.machineId);
+      const late = order && t.taskType === 'production' && Date.parse(t.endTime) > Date.parse(order.dueDate);
+      rows.push([
+        order?.orderNumber ?? '',
+        product ? `${product.productCode} ${product.productName}` : '',
+        machine ? `${machine.machineCode} ${machine.machineName}` : t.machineId,
+        TASK_TYPE_LABELS[t.taskType],
+        excelText(fmtDateTimeFull(t.startTime)),
+        excelText(fmtDateTimeFull(t.endTime)),
+        Math.round((Date.parse(t.endTime) - Date.parse(t.startTime)) / 60_000),
+        order ? excelText(fmtDateTimeFull(order.dueDate)) : '',
+        t.taskType === 'production' ? (late ? '逾期' : '準時') : '—',
+      ]);
+    }
+    downloadCsv(`排程結果_${scenario.algorithm}_${fileStamp()}`, rows);
+  };
+
   // 時間刻度
   const ticks: { x: number; label: string; major: boolean }[] = [];
   const stepMs = pxPerMin >= 0.4 ? 4 * HOUR_MS : 24 * HOUR_MS;
@@ -97,13 +128,18 @@ export function GanttPreview({ scenarioId }: { scenarioId: string }) {
 
   return (
     <div className="space-y-3">
-      {/* 圖例 */}
+      {/* 圖例 + 匯出 */}
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-production" /> 生產</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-setup" /> 換模</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-cleaning" /> 清洗</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm bg-maintenance bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,255,255,.6)_3px,rgba(255,255,255,.6)_6px)]" /> 維護/停機</span>
         <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-sm border-2 border-red-500 bg-production" /> 逾期</span>
+        <span className="ml-auto">
+          <Button variant="secondary" onClick={exportSchedule}>
+            ⬇ 匯出此方案排程(CSV)
+          </Button>
+        </span>
       </div>
 
       {/* 甘特圖主體(唯讀) */}

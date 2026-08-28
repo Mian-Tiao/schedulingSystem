@@ -14,6 +14,19 @@ export function fmtDateTime(iso: string | number | Date): string {
   }).format(d);
 }
 
+/** 帶年份的完整時間,如 2026/08/29 09:00(用於匯出報表) */
+export function fmtDateTimeFull(iso: string | number | Date): string {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+}
+
 export function fmtDate(iso: string | number | Date): string {
   return new Intl.DateTimeFormat('zh-TW', {
     timeZone: TZ,
