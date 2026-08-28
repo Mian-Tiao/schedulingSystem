@@ -7,6 +7,7 @@ import { Badge, Banner, Button, EmptyState, ErrorState, Loading } from '../compo
 import type { ObjectiveId, ScenarioSummary } from '../types';
 import { OBJECTIVE_LABELS } from '../types';
 import { fmtDateTime } from '../utils/time';
+import { GanttPreview } from './GanttPreview';
 import { METRIC_ROWS, buildAdvice, cardHighlight, splitMetrics, type MetricRow } from './scheduleLogic';
 
 type Mode = 'auto' | 'manual';
@@ -28,6 +29,7 @@ export function SchedulePage() {
   const [running, setRunning] = useState(false);
   const [setupCollapsed, setSetupCollapsed] = useState(false);
   const [tableExpanded, setTableExpanded] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
 
   const availableMachines = (machines ?? []).filter((m) => m.status !== 'disabled');
 
@@ -107,6 +109,13 @@ export function SchedulePage() {
   const resultObjective = list[0]?.objective ?? objective;
   const { decisive, consistent } = splitMetrics(list, resultObjective);
   const maxScore = Math.max(1, ...list.map((s) => s.score));
+
+  // 可預覽甘特圖的方案(排除模擬資料);預設顯示推薦第一名
+  const previewable = list.filter((s) => !s.scenarioId.startsWith('mock-'));
+  const activePreviewId =
+    previewId && previewable.some((s) => s.scenarioId === previewId)
+      ? previewId
+      : previewable.find((s) => s.rank === 1)?.scenarioId ?? previewable[0]?.scenarioId ?? null;
 
   const renderMetricRow = (row: MetricRow) => {
     const values = list.map((s) => s.metrics[row.key]);
@@ -323,8 +332,44 @@ export function SchedulePage() {
             </div>
           </section>
 
+          {activePreviewId && (
+            <section className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-slate-700">3. 排程結果甘特圖(直接在此檢視,免跳頁)</h2>
+                <Link
+                  to={`/gantt/${activePreviewId}`}
+                  className="text-sm font-medium text-blue-600 hover:underline"
+                >
+                  在完整甘特圖中拖曳調整 →
+                </Link>
+              </div>
+              {/* 演算法分頁切換 */}
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {previewable.map((s) => (
+                  <button
+                    key={s.scenarioId}
+                    type="button"
+                    onClick={() => setPreviewId(s.scenarioId)}
+                    className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                      s.scenarioId === activePreviewId
+                        ? 'border-blue-500 bg-blue-600 text-white'
+                        : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {s.rank === 1 && '🏆 '}
+                    {s.algorithm}
+                    <span className={s.scenarioId === activePreviewId ? 'ml-1 opacity-80' : 'ml-1 text-slate-400'}>
+                      第 {s.rank} 名
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <GanttPreview scenarioId={activePreviewId} />
+            </section>
+          )}
+
           <section className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="mb-1 text-sm font-semibold text-slate-700">3. 方案績效比較</h2>
+            <h2 className="mb-1 text-sm font-semibold text-slate-700">4. 方案績效比較</h2>
             <p className="mb-3 text-xs text-slate-400">
               預設只顯示各方案「有明顯差異」的決定性指標;三方案表現相近的項目可展開查看。
             </p>
