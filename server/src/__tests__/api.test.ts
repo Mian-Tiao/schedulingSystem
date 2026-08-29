@@ -189,6 +189,23 @@ describe('訂單 CRUD', () => {
     expect(res.body.results[1].error).toContain('找不到產品');
   });
 
+  it('CSV 匯入支援引號、逗號與欄位內換行', async () => {
+    const csv = [
+      'orderNumber,productCode,quantity,releaseTime,dueDate,processingTime,priority,notes',
+      '"TO-CSV-QUOTED","TP-A","2","2026-08-10T08:00:00+08:00","2026-08-11T12:00:00+08:00","","2","需要,加急\n備註含 ""雙引號"""',
+    ].join('\n');
+
+    const res = await request(app).post('/api/orders/import').send({ csv });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.failed).toBe(0);
+
+    const list = await request(app).get('/api/orders').query({ search: 'TO-CSV-QUOTED' });
+    expect(list.body[0].notes).toContain('需要,加急');
+    expect(list.body[0].notes).toContain('"雙引號"');
+    expect(list.body[0].notes).toContain('\n');
+  });
+
   it('複製訂單', async () => {
     const list = await request(app).get('/api/orders');
     const t1 = list.body.find((o: { orderNumber: string }) => o.orderNumber === 'TO-001');
