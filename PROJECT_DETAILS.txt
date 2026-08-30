@@ -1,0 +1,1300 @@
+Lean Scheduling Assistant 專案功能與流程整理
+最後整理日期: 2026-08-29
+
+一、專案定位
+
+本專案是一套工廠生產排程輔助系統，目標是讓使用者維護產品、BOM、機台、停機、換線規則與生產訂單，然後透過多種排程演算法產生候選方案，依指定目標排序推薦，並提供甘特圖手動調整、急單與機台故障模擬，以及 AI 對話分析。
+
+系統目前偏 MVP / 決策輔助工具，不是完整 ERP / MES / APS。它聚焦在:
+
+1. 基礎資料維護
+2. 生產訂單維護與匯入
+3. 排程方案產生與比較
+4. 甘特圖視覺化與手動調整
+5. 急單與故障情境模擬
+6. AI 輔助查詢、分析與可確認式操作
+
+
+二、技術架構
+
+根目錄:
+
+- client/: 前端 React 應用
+- server/: 後端 Express API 與排程核心
+- docs/: 專案文件與範例資料
+- schedulingSystem/: 未追蹤的同專案副本，容易造成閱讀或搜尋混淆
+- render.yaml: Render 部署設定
+- start.bat: Windows 啟動腳本
+
+前端技術:
+
+- React 18
+- Vite
+- TypeScript
+- Tailwind CSS
+- TanStack Query: API request/cache/mutation
+- Zustand: 甘特圖 undo/redo 狀態
+- React Router: 頁面路由
+
+後端技術:
+
+- Node.js
+- Express
+- TypeScript
+- Prisma ORM
+- SQLite 預設資料庫
+- Zod 驗證 request body/query
+- Vitest + Supertest 測試
+- Pino logger
+- Gemini API for AI assistant
+
+主要入口:
+
+- server/src/index.ts: 啟動 Express server
+- server/src/app.ts: 建立 app、掛載所有 API router
+- client/src/main.tsx: 建立 React router 與 QueryClient
+
+
+三、資料模型
+
+Prisma schema: server/prisma/schema.prisma
+
+1. Product
+
+用途: 產品主檔。
+
+主要欄位:
+
+- id
+- productCode: 產品代號，唯一
+- productName: 產品名稱
+- description
+- defaultProcessingTime: 預設每單位加工分鐘數
+- defaultCleaningTime: 預設清潔時間
+- createdAt / updatedAt
+
+關聯:
+
+- ProductionOrder[]
+- BomItem[]
+
+2. Machine
+
+用途: 機台主檔。
+
+主要欄位:
+
+- id
+- machineCode: 機台代號，唯一
+- machineName
+- model
+- description
+- supportedProductIds: JSON string，表示支援哪些產品
+- defaultSetupTime
+- defaultCleaningTime
+- workingHours: JSON string，週一到週日的工作時段
+- status: available / maintenance / disabled
+
+關聯:
+
+- MachineDowntime[]
+
+3. MachineDowntime
+
+用途: 機台停機或維修時段。
+
+主要欄位:
+
+- id
+- machineId
+- type: maintenance / breakdown / plannedStop / other
+- startTime
+- endTime
+- reason
+
+4. ChangeoverRule
+
+用途: 換線規則，決定不同產品切換時的 setup / cleaning 時間。
+
+主要欄位:
+
+- id
+- machineId: 可為 null，null 表示全域規則
+- fromProductId: 可為 null，null 表示泛用起點或第一筆
+- toProductId
+- setupMinutes
+- cleaningMinutes
+
+5. ProductionOrder
+
+用途: 生產訂單。
+
+主要欄位:
+
+- id
+- orderNumber: 訂單編號，唯一
+- productId
+- quantity
+- releaseTime: 最早可開工時間
+- dueDate: 交期
+- processingTime: 總加工時間，若未指定會用 quantity * product.defaultProcessingTime
+- priority: 1 到 5，1 最高，5 最低
+- eligibleMachineIds: JSON string，空陣列表示可用任何支援產品的機台
+- status: pending / scheduled / inProgress / completed / cancelled
+- notes
+- createdAt / updatedAt
+
+6. ScheduleScenario
+
+用途: 一個排程方案。每次產生排程會得到 FIFO / EDD / SPT / CR 四個方案。
+
+主要欄位:
+
+- id
+- name
+- algorithm
+- objective
+- generatedAt
+- metrics: JSON string
+- score
+- rank
+- recommendationReason
+- isManuallyAdjusted
+- baselineTasks: JSON string，保存原始排程，供 reset 使用
+- unscheduledOrders: JSON string
+- batchId
+- anchorTime
+
+注意:
+
+- 目前 saveScenarios() 會刪除所有舊 scenario/task，只保留最新一批排程方案。
+
+7. ScheduledTask
+
+用途: 甘特圖上的一段任務。
+
+主要欄位:
+
+- id
+- scenarioId
+- orderId: setup/cleaning/production 會有 orderId，maintenance 可為 null
+- machineId
+- taskType: production / setup / cleaning / maintenance
+- startTime
+- endTime
+- sequence
+- isManuallyAdjusted
+
+8. BomItem
+
+用途: 產品 BOM 材料明細。
+
+主要欄位:
+
+- id
+- productId
+- materialName
+- unit
+- quantity
+- customFields: JSON string，例如規格、供應商等彈性欄位
+- createdAt / updatedAt
+
+
+四、後端 API 總覽
+
+API root: /api
+
+1. Health
+
+- GET /api/health
+- 回傳 { ok: true }
+
+2. Products
+
+- GET /api/products
+  取得產品列表，依 productCode 排序。
+
+- POST /api/products
+  新增產品。
+
+- PUT /api/products/:id
+  更新產品。
+
+- DELETE /api/products/:id
+  刪除產品。若已有 ProductionOrder 使用該產品，會回傳 409。
+
+3. BOM
+
+- GET /api/products/:productId/bom
+  取得指定產品 BOM。
+
+- POST /api/products/:productId/bom
+  新增 BOM 項目。
+
+- PUT /api/products/:productId/bom/:id
+  更新 BOM 項目。
+
+- DELETE /api/products/:productId/bom/:id
+  刪除 BOM 項目。
+
+4. Machines
+
+- GET /api/machines
+  取得機台列表，包含 downtimes。
+
+- POST /api/machines
+  新增機台。
+
+- PUT /api/machines/:id
+  更新機台。
+
+- DELETE /api/machines/:id
+  刪除機台。
+
+5. Machine Downtimes
+
+- GET /api/machines/:id/downtimes
+  取得指定機台停機時段。
+
+- POST /api/machines/:id/downtimes
+  新增停機時段，會驗證 endTime 必須大於 startTime。
+
+- DELETE /api/machines/:id/downtimes/:downtimeId
+  刪除停機時段。
+
+6. Changeover Rules
+
+- GET /api/changeover-rules
+  取得所有換線規則。
+
+- POST /api/changeover-rules
+  新增換線規則。
+
+- DELETE /api/changeover-rules/:id
+  刪除換線規則。
+
+7. Orders
+
+- GET /api/orders
+  取得訂單列表，支援 query:
+  search, productId, status, priority, dueBefore, dueAfter
+
+- POST /api/orders
+  新增訂單。
+
+- PUT /api/orders/:id
+  更新訂單。
+
+- PATCH /api/orders/:id/status
+  更新訂單狀態。
+
+- POST /api/orders/:id/duplicate
+  複製訂單，編號會自動加 -C1 到 -C99。
+
+- DELETE /api/orders/:id
+  刪除訂單。
+
+- POST /api/orders/import
+  匯入 CSV 訂單。
+
+CSV 欄位:
+
+- orderNumber
+- productCode
+- quantity
+- releaseTime
+- dueDate
+- processingTime
+- priority
+- eligibleMachineCodes
+- notes
+
+目前 CSV 匯入已支援:
+
+- 雙引號欄位
+- 欄位內逗號
+- 欄位內換行
+- 雙引號跳脫
+- 未關閉引號會回傳 CSV_PARSE_ERROR
+
+8. Schedules
+
+- POST /api/schedules/generate
+  產生 FIFO / EDD / SPT / CR 四個排程方案。
+
+  body:
+  - objective
+  - machineIds optional
+  - anchorTime optional
+  - horizonDays optional
+
+- GET /api/schedules
+  取得目前保存的 scenario summary。
+
+- GET /api/schedules/:scenarioId
+  取得 scenario detail，包含 tasks。
+
+- POST /api/schedules/:scenarioId/validate-adjustment
+  驗證甘特圖手動調整是否合法，並回傳調整後 metrics 與延遲影響。
+
+- POST /api/schedules/:scenarioId/adjust
+  套用甘特圖手動調整。
+
+- POST /api/schedules/:scenarioId/recalculate
+  重新計算現有 scenario 的 metrics。
+
+- POST /api/schedules/:scenarioId/reset
+  重設回 baselineTasks。
+
+9. Simulations
+
+- POST /api/simulations/urgent-order
+  急單模擬。回傳 baseline、insert 策略與 rebuild 策略結果。
+
+- POST /api/simulations/machine-breakdown
+  機台故障模擬。回傳故障後方案、延遲訂單、最晚安全修復時間與建議。
+
+10. AI
+
+- GET /api/ai/status
+  確認 AI 是否啟用、provider 與 model。
+
+- POST /api/ai/analyze
+  對目前排程方案做分析。需要已有 schedule。
+
+- POST /api/ai/chat
+  一般 AI 對話，可查資料、分析、提出待確認動作。
+
+- POST /api/ai/actions/:actionId/confirm
+  確認 AI 建議的 mutation action。
+
+- POST /api/ai/actions/:actionId/cancel
+  取消 AI 建議的 mutation action。
+
+
+五、排程核心流程
+
+核心檔案:
+
+- server/src/modules/scheduling/engine/types.ts
+- server/src/modules/scheduling/engine/engine.ts
+- server/src/modules/scheduling/engine/calendar.ts
+- server/src/modules/scheduling/engine/changeover.ts
+- server/src/modules/scheduling/runScheduling.ts
+- server/src/modules/scheduling/metrics/metrics.ts
+- server/src/modules/scheduling/ranking/ranking.ts
+- server/src/modules/scheduling/ranking/weights.ts
+- server/src/modules/scheduling/validators/validators.ts
+
+1. 排程輸入載入
+
+loadSchedulingInput(anchorTime, includeOrderIds) 會從資料庫讀取:
+
+- products
+- machines
+- machineDowntimes
+- changeoverRules
+- productionOrders
+
+預設只抓 status 為 pending / scheduled 的訂單。
+
+若已有 top scenario，且有 inProgress 訂單，會把 top scenario 裡對應的 inProgress tasks 帶入排程輸入，讓新排程可保留進行中的工作。
+
+2. 資料驗證
+
+validateSchedulingInput() 會檢查:
+
+- 是否有訂單
+- 是否有可用機台
+- 機台是否有工作時段
+- 工作時段 end 是否大於 start
+- downtime end 是否大於 start
+- 訂單 processingTime 是否大於 0
+- 訂單 dueDate 是否早於 releaseTime
+- 訂單是否有可用機台
+
+error 會阻擋排程；warning 會回傳給前端，但不一定阻擋。
+
+3. 支援的演算法
+
+- FIFO: 依 createdAt 排序，再用 orderNumber tie-break
+- EDD: 依 dueDate 排序，再用 priority / createdAt / orderNumber tie-break
+- SPT: 依 processingTime 短者優先，再用 priority / createdAt / orderNumber tie-break
+- CR: Critical Ratio，依目前模擬時間動態排序
+
+4. 機台資格
+
+eligibleMachines(order, machines) 會篩選:
+
+- 機台 status 不能是 disabled
+- 機台 supportedProductIds 必須包含訂單 productId
+- 若訂單 eligibleMachineIds 不為空，機台 id 必須在 eligibleMachineIds 內
+
+5. 工作曆與可用時間
+
+calendar.ts 負責:
+
+- expandWorkingWindows(): 將週工作時段展開為實際 epoch ms 時間窗
+- subtractIntervals(): 從可用時間扣掉 downtime 與已排 busy intervals
+- machineAvailability(): 計算某機台在排程期間真正可用的時間
+- findSlot(): 找一段連續可用時間，供 setup / cleaning 使用
+- findSlots(): 找多段可用時間，供 production 跨班或跨日切段
+- machineCapacityMinutes(): 計算機台可用產能分鐘數
+
+時間處理:
+
+- 內部使用 epoch ms
+- API 對外使用 ISO 8601
+- 工作曆以 Asia/Taipei UTC+8 展開
+
+6. 換線規則
+
+resolveChangeover(machine, fromProductId, toProductId, rules) 優先順序:
+
+1. 指定機台 + 指定前產品 + 指定後產品
+2. 指定機台 + fromProductId null + 指定後產品
+3. 全域規則 + 指定前產品 + 指定後產品
+4. 若 fromProductId 為 null，代表第一筆，setup/cleaning 預設為 0
+5. 否則使用 machine.defaultSetupTime / machine.defaultCleaningTime
+
+同產品連續生產時 setup/cleaning 為 0。
+
+7. 單張訂單 placement
+
+computePlacement() 會針對某張訂單與某台機台嘗試排入:
+
+1. cursor 從 max(anchorTime, machine.lastEnd) 開始
+2. 若需要 cleaning，找連續空檔
+3. 若需要 setup，找連續空檔
+4. production 從 max(cursor, order.releaseTime) 開始
+5. production 可透過 findSlots() 跨工作時段切段
+6. 若找不到足夠時間，回傳 null
+
+8. 多機台挑選規則
+
+chooseBestPlacement() 會從所有候選 placement 中選最佳:
+
+1. productionEnd 最早
+2. setupMinutes + cleaningMinutes 最少
+3. state.loadMinutes 較低
+4. machineCode 較小
+
+9. 寫入任務
+
+commitPlacement() 會把 cleaning、setup、production segments 寫成 ScheduledTask:
+
+- task id 包含 algorithm 與 orderNumber
+- sequence 依機台遞增
+- production 若被切成多段，id 會加 -1, -2 等 suffix
+- 更新機台 busy intervals、lastProductId、lastEnd、loadMinutes
+
+10. Maintenance tasks
+
+maintenanceTasks() 會把 downtime 轉成甘特圖上的 maintenance task，讓使用者看見維修或停機區間。
+
+11. 排程產生
+
+runAllAlgorithms() 流程:
+
+1. validateSchedulingInput()
+2. 若有 error，回傳 issues，不產生 scenario
+3. 依序跑 FIFO / EDD / SPT / CR
+4. 每個結果 calculateMetrics()
+5. 若完全沒有 production task，回傳 NO_SCHEDULED_TASKS
+6. 用 rankScenarios() 依 objective 算分與 rank
+7. 組成 ScheduleScenario[]
+
+generateSchedules() 流程:
+
+1. 驗證 body
+2. 決定 anchorTime，預設 Date.now()
+3. loadSchedulingInput()
+4. 若指定 machineIds，就只用指定機台及相關 downtime/rules
+5. runAllAlgorithms()
+6. saveScenarios()
+7. 把已排入 task 的 pending orders 更新為 scheduled
+8. 回傳 batchId、anchorTime、issues、scenarios、recommended
+
+12. Scenario 保存方式
+
+saveScenarios() 目前會:
+
+1. 刪除所有 ScheduledTask
+2. 刪除所有 ScheduleScenario
+3. 建立新的 ScheduleScenario
+4. 建立新的 ScheduledTask
+
+所以目前只保留最新一批排程，不保留歷史批次。
+
+
+六、排程指標與推薦分數
+
+calculateMetrics() 計算:
+
+- makespanMinutes: 從 anchorTime 到最後一個非 maintenance task 結束
+- averageTardinessMinutes: 平均延遲
+- maximumTardinessMinutes: 最大延遲
+- onTimeDeliveryRate: 準交率
+- machineUtilizationRate: production minutes / used machine capacity
+- machineOccupancyRate: production + setup + cleaning / capacity
+- totalSetupMinutes
+- totalCleaningMinutes
+- averageFlowTimeMinutes: completion - releaseTime
+- lateOrderCount
+- scheduledOrderCount
+
+rankScenarios() 計分:
+
+- 依 objective 取 weights
+- 每個 metric 做 min-max normalization
+- higher 指標越大越好，例如準交率、機台稼動率
+- lower 指標越小越好，例如 makespan、平均延遲、最大延遲、換線時間
+- 加權後轉成 0 到 100 分
+- 分數相同時用 algorithm 字母順序 tie-break，確保 deterministic
+
+支援目標:
+
+1. ON_TIME_DELIVERY
+   重視準交率、平均延遲、最大延遲。
+
+2. MIN_AVG_TARDINESS
+   重視平均延遲與最大延遲。
+
+3. MIN_MAKESPAN
+   重視 makespan。
+
+4. MAX_UTILIZATION
+   重視機台稼動率。
+
+5. MIN_CHANGEOVER
+   重視 setup + cleaning 總時間。
+
+6. BALANCED
+   各指標平衡。
+
+
+七、甘特圖手動調整流程
+
+前端:
+
+- client/src/pages/GanttPage.tsx
+- client/src/stores/ganttStore.ts
+
+後端:
+
+- server/src/modules/scheduling/engine/adjust.ts
+- server/src/modules/scenarios/router.ts
+
+前端流程:
+
+1. 進入 /gantt 或 /gantt/:scenarioId
+2. 若未指定 scenarioId，預設使用 rank 1 的 scenario
+3. 載入 scenario tasks、machines、orders、products
+4. 初始化 Zustand ganttStore history
+5. 使用者可拖曳 production task
+6. X 方向依 SNAP_MIN = 15 分鐘 snap
+7. Y 方向切換目標機台列
+8. pointer up 後呼叫 validate-adjustment
+9. 若 valid，呼叫 adjust
+10. 回傳新 tasks 後 pushSnapshot，供 undo/redo 使用
+
+拖曳限制:
+
+- 只有 production task 可拖曳
+- setup / cleaning / maintenance 不可直接拖曳
+
+後端 applyAdjustment() 流程:
+
+1. 找到被移動的 production task
+2. 找到對應 order
+3. 找到目標 machine
+4. 驗證機台狀態不是 disabled
+5. 驗證機台支援該產品
+6. 驗證訂單 eligibleMachineIds
+7. 驗證新 startTime 不早於 releaseTime
+8. 驗證 startTime 在工作時段內且不落在 downtime
+9. 重建受影響機台上的 production sequence
+10. 重新插入 setup / cleaning / production
+11. 計算 oldCompletion / newCompletion 與 tardiness diff
+12. 若新延遲變大，回傳 warnings
+13. 回傳新 tasks
+
+重要設計:
+
+- 手動調整只針對 production task
+- 移動後會重排受影響機台後續任務
+- setup/cleaning 由系統依換線規則重新產生
+- reset 會回 baselineTasks
+- undo/redo 在前端記錄操作，但會透過 API replay 到後端
+
+
+八、情境模擬流程
+
+前端:
+
+- client/src/pages/SimulationPage.tsx
+
+後端:
+
+- server/src/modules/simulations/router.ts
+- server/src/modules/simulations/service.ts
+
+1. 急單模擬
+
+API:
+
+- POST /api/simulations/urgent-order
+
+輸入:
+
+- scenarioId
+- order:
+  - orderNumber
+  - productId
+  - quantity
+  - releaseTime
+  - dueDate
+  - processingTime optional
+  - priority
+  - eligibleMachineIds
+
+流程:
+
+1. 載入指定 scenario
+2. loadSchedulingInput(anchorTime, scenarioOrderIds)
+3. 依產品 defaultProcessingTime 補 processingTime
+4. 建立虛擬 urgent ProductionOrder，id 使用 sim-urgent-*
+5. insertUrgentOrder()
+6. rebuildWithUrgent()
+7. 回傳兩種策略結果
+
+insert 策略:
+
+- 不移動原有任務
+- 根據既有 scenario tasks 建立 machine states
+- 把急單插入可用空檔或尾端
+- 回傳新 metrics
+- affectedOrders 為空，因為原單不被移動
+
+rebuild 策略:
+
+- 把急單加入 input.orders
+- 用原 scenario.algorithm 重新跑 runAlgorithm()
+- 計算新 metrics
+- 用 compareImpacts() 比較原方案與新方案對訂單完工時間的影響
+
+2. 機台故障模擬
+
+API:
+
+- POST /api/simulations/machine-breakdown
+
+輸入:
+
+- scenarioId
+- machineId
+- startTime
+- estimatedRepairTime
+
+流程:
+
+1. 載入指定 scenario
+2. loadSchedulingInput(anchorTime, scenarioOrderIds)
+3. 建立虛擬 MachineDowntime:
+   type = breakdown
+   startTime = 故障開始
+   endTime = 預估修復時間
+4. 將 breakdown downtime 加入 input
+5. 用原 scenario.algorithm 重跑 runAlgorithm()
+6. 計算 metrics
+7. compareImpacts() 比較原方案與故障方案
+8. 找出 lateOrders
+9. latestSafeRepairTime() 反推最晚安全修復時間
+10. 建議可轉移機台、重要訂單、可協調訂單
+
+latestSafeRepairTime():
+
+- 每 30 分鐘為一個 step
+- 使用 binary search
+- 以 priority <= 2 的訂單不延遲為安全條件
+- 若連最短 30 分鐘都不安全，回傳 null
+
+
+九、AI 功能流程
+
+前端:
+
+- client/src/pages/AiPage.tsx
+
+後端:
+
+- server/src/modules/ai/router.ts
+- server/src/modules/ai/tools.ts
+- server/src/modules/ai/promptBuilder.ts
+
+設定:
+
+- GEMINI_API_KEY 或 GOOGLE_API_KEY
+- GEMINI_MODEL，預設 gemini-3.6-flash
+
+AI status:
+
+- GET /api/ai/status
+- 回傳 enabled、provider、model
+
+AI analyze:
+
+- POST /api/ai/analyze
+- requireSchedule = true
+- allowActions = false
+- 用於分析目前排程方案
+
+AI chat:
+
+- POST /api/ai/chat
+- 可帶 question、history、extraContext
+- history 最多 12 則，每則最多 2000 字
+
+AI 可用工具:
+
+讀取工具:
+
+1. list_products
+   可依產品代號或名稱搜尋，回傳產品與預設加工/清潔時間。
+
+2. list_machines
+   可依 status 篩選，回傳機台代號、名稱、狀態、支援產品。
+
+3. list_orders
+   可依 search/status/limit 查訂單。
+
+需使用者確認的 mutation 工具:
+
+1. create_order
+   建立生產訂單，可選擇建立後立即排程。
+
+2. run_scheduling
+   重新產生排程。
+
+安全設計:
+
+- AI 若提出 mutation，只會建立 pending action
+- 使用者需呼叫 confirm API 才會真的寫入資料或重新排程
+- pending action 有 10 分鐘 TTL
+- cancel API 可取消
+- 一次 AI 回合若出現多個 mutation tool call，後端會拒絕
+
+confirm create_order:
+
+1. createProductionOrder()
+2. 若 runSchedulingAfterCreate 為 false，導向 /orders
+3. 若 true，generateSchedules()
+4. 成功後導向推薦方案的 /gantt/:scenarioId
+
+confirm run_scheduling:
+
+1. generateSchedules()
+2. 若 blocked，回傳 SCHEDULING_BLOCKED
+3. 成功後導向推薦方案甘特圖
+
+
+十、前端頁面功能
+
+路由定義: client/src/main.tsx
+
+- /: DashboardPage
+- /orders: OrdersPage
+- /products: ProductsPage
+- /machines: MachinesPage
+- /schedule: SchedulePage
+- /gantt: GanttPage
+- /gantt/:scenarioId: GanttPage
+- /simulation: SimulationPage
+- /ai: AiPage
+
+1. Layout
+
+檔案:
+
+- client/src/components/Layout.tsx
+
+功能:
+
+- 左側導覽列
+- 行動版底部導覽
+- 目前頁面標題
+- 今日日期
+
+2. DashboardPage
+
+功能:
+
+- 顯示待排訂單數
+- 顯示今日到期訂單
+- 顯示 48 小時內風險訂單
+- 顯示可用/維修/停用機台數
+- 顯示最新推薦方案
+- 顯示各機台 production / changeover 負載
+
+3. OrdersPage
+
+功能:
+
+- 訂單列表
+- 新增/編輯/刪除訂單
+- 複製訂單
+- 更新訂單狀態
+- CSV 匯入
+- 顯示 product 資訊
+- 若 processingTime 未填，使用 quantity * product.defaultProcessingTime
+
+4. ProductsPage
+
+功能:
+
+- 產品列表
+- 新增/編輯/刪除產品
+- 顯示平均加工時間
+- 顯示未被任何機台支援的產品數
+- BOM modal:
+  - 新增材料
+  - 編輯材料
+  - 刪除材料
+  - 新增自訂欄位
+  - 顯示 customFields
+
+5. MachinesPage
+
+功能:
+
+- 機台列表
+- 新增/編輯/刪除機台
+- 設定支援產品
+- 設定 default setup/cleaning time
+- 設定每週 workingHours
+- 設定機台 status
+- 新增/刪除 downtime
+- 管理 changeover rules
+
+6. SchedulePage
+
+功能:
+
+- 選擇排程模式:
+  - auto: 使用所有可用機台
+  - manual: 使用者手動勾選機台
+- 選擇 objective
+- 產生排程
+- 顯示前三名推薦方案
+- 顯示 scenario score、rank、recommendationReason
+- 顯示方案比較表
+- 顯示可預覽甘特圖
+- 匯出方案比較 CSV
+- 顯示 unscheduledOrders
+
+前端也有 mock schedule logic，可用於 mock mode 或輔助 UI 建議:
+
+- client/src/api/mock/schedule.ts
+- client/src/pages/scheduleLogic.ts
+
+7. GanttPage
+
+功能:
+
+- 顯示 scenario 甘特圖
+- 時間尺度:
+  - hour
+  - shift
+  - day
+- zoom in / out
+- 顯示 now line
+- 顯示 production / setup / cleaning / maintenance
+- production task 可拖曳調整時間與機台
+- 顯示調整前後 metrics diff
+- undo / redo
+- reset baseline
+- 匯出排程 CSV
+- task detail modal
+
+8. SimulationPage
+
+功能:
+
+- 急單模擬 tab
+- 機台故障模擬 tab
+- 顯示 baseline 與 simulated metrics 比較
+- 顯示 affected orders
+- 顯示故障後甘特圖預覽
+- 可對急單策略套用實際操作，導向甘特圖
+
+9. AiPage
+
+功能:
+
+- 顯示 AI 是否啟用
+- quick questions
+- chat history localStorage
+- 傳送問題到 /api/ai/chat
+- 顯示 AI 回答
+- 若 AI 回傳 pendingAction，前端提供確認/取消
+- 確認後依後端 navigateTo 導頁
+
+
+十一、共用前端工具
+
+1. API client
+
+檔案:
+
+- client/src/api/client.ts
+
+功能:
+
+- apiGet / apiPost / apiPut / apiPatch / apiDelete
+- 統一處理錯誤格式
+- 支援 VITE_API_URL
+- 支援 mock request
+
+錯誤格式:
+
+- ApiError(code, message, status, details)
+
+2. TanStack Query hooks
+
+檔案:
+
+- client/src/api/hooks.ts
+
+功能:
+
+- useProducts
+- useProductMutations
+- useMachines
+- useMachineMutations
+- useChangeoverRules
+- useChangeoverMutations
+- useOrders
+- useOrderMutations
+- useScenarios
+- useScenarioDetail
+- useScheduleMutations
+- useDashboard
+- useAiStatus
+- useBom
+- useBomMutations
+
+mutation 成功後會 invalidate 對應 query。
+
+3. 時間工具
+
+檔案:
+
+- client/src/utils/time.ts
+
+功能:
+
+- fmtDateTime
+- fmtDateTimeFull
+- fmtDate
+- fmtTime
+- fmtMinutes
+- pct
+- toLocalInput
+- fromLocalInput
+
+4. CSV 匯出工具
+
+檔案:
+
+- client/src/utils/exportCsv.ts
+
+功能:
+
+- escapeCell
+- excelText
+- downloadCsv
+- fileStamp
+
+5. UI components
+
+檔案:
+
+- client/src/components/ui.tsx
+
+功能:
+
+- PageHeader
+- PageMetrics
+- Button
+- Field
+- Modal
+- ConfirmDialog
+- Loading
+- EmptyState
+- ErrorState
+- Badge
+- Banner
+
+
+十二、訂單狀態同步
+
+檔案:
+
+- server/src/shared/orderSync.ts
+
+用途:
+
+- 根據目前 top scenario tasks 與 now 判斷訂單狀態
+- 若 production 已開始且未完成，標為 inProgress
+- 若 production 全部完成，標為 completed
+
+呼叫點:
+
+- GET /api/orders
+- GET /api/dashboard
+- loadSchedulingInput()
+
+
+十三、錯誤處理
+
+檔案:
+
+- server/src/shared/errors.ts
+
+主要設計:
+
+- AppError(code, message, status, details)
+- notFound(entity)
+- wrap(handler): 包裝 async route，統一轉交 errorHandler
+- errorHandler:
+  - ZodError 轉 VALIDATION_ERROR
+  - AppError 依 status/code 回傳
+  - 其他錯誤回 INTERNAL_ERROR
+
+API 錯誤格式:
+
+{
+  "error": {
+    "code": "...",
+    "message": "...",
+    "details": ...
+  }
+}
+
+
+十四、測試覆蓋
+
+後端測試:
+
+- server/src/__tests__/api.test.ts
+  API CRUD、CSV 匯入、排程、模擬、AI tool 行為
+
+- server/src/__tests__/bom.test.ts
+  BOM CRUD 與產品刪除 cascade 行為
+
+- server/src/modules/scheduling/__tests__/adjust.test.ts
+  甘特圖手動調整
+
+- server/src/modules/scheduling/__tests__/calendar.test.ts
+  工作曆與可用時間
+
+- server/src/modules/scheduling/__tests__/changeover.test.ts
+  換線規則
+
+- server/src/modules/scheduling/__tests__/engine.test.ts
+  排程引擎
+
+- server/src/modules/scheduling/__tests__/metrics.test.ts
+  指標計算
+
+- server/src/modules/scheduling/__tests__/ranking.test.ts
+  排名與推薦理由
+
+前端測試:
+
+- client/src/api/mock.test.ts
+- client/src/pages/scheduleLogic.test.ts
+- client/src/stores/ganttStore.test.ts
+
+目前驗證狀態:
+
+- git diff --check 通過
+- server/client 的 npm test 與 typecheck 目前無法執行，因為 node_modules 尚未安裝，vitest 與 tsc 找不到
+- PowerShell 直接執行 npm 會被 execution policy 擋住，可使用 npm.cmd
+
+
+十五、啟動與部署
+
+本機後端:
+
+1. cd server
+2. npm install
+3. 建立 .env
+4. npm run db:push
+5. npm run db:seed
+6. npm run dev
+
+後端預設:
+
+- http://localhost:3001
+
+本機前端:
+
+1. cd client
+2. npm install
+3. npm run dev
+
+前端預設:
+
+- http://localhost:5173
+
+AI 設定:
+
+- server/.env:
+  GEMINI_API_KEY=你的 key
+  GEMINI_MODEL=gemini-3.6-flash
+
+前端 mock:
+
+- client/.env.local:
+  VITE_USE_MOCK=true
+
+部署:
+
+- render.yaml 定義 Render 部署
+- server package 有 render:build script:
+  - switch-postgres.mjs
+  - prisma generate
+  - prisma db push --accept-data-loss
+  - tsc
+  - seed
+
+
+十六、目前重要注意事項
+
+1. 排程只保留最新批次
+
+saveScenarios() 每次 generate 都會刪除全部舊 scenario/task。
+
+影響:
+
+- 無法查歷史排程
+- 無法比較不同日期或不同批次排程
+- 若要做正式 APS，建議改成 batch/version 保存
+
+2. CSV 匯入已改善
+
+原本直接 split(',')，現在已改成 parseCsv()。
+
+仍可再加強:
+
+- 欄位數與 header 數不一致時給更明確錯誤
+- 支援 BOM 或機台批次匯入
+- 顯示 CSV row number 與原始行號，目前欄位內換行時 i + 1 是資料列序號，不是實際文字行號
+
+3. schedulingSystem/ 是未追蹤副本
+
+目前 git status 顯示:
+
+- ?? schedulingSystem/
+
+建議:
+
+- 若只是備份，移出 repo 或加 .gitignore
+- 若是正式子專案，應整理 README 與路徑避免和根目錄 client/server 混淆
+
+4. 中文顯示
+
+實際檔案中不少中文是正常的，但在 PowerShell Get-Content 某些情境會顯示亂碼。
+
+建議:
+
+- 統一檔案編碼為 UTF-8
+- 在 Windows 終端確認 chcp / PowerShell 編碼設定
+- 若瀏覽器 UI 也亂碼，才需要修前端文字或檔案保存格式
+
+5. 尚未安裝依賴
+
+server/node_modules 與 client/node_modules 不存在。
+
+影響:
+
+- vitest 無法跑
+- tsc 無法跑
+- lint/build 無法跑
+
+建議先安裝依賴後執行:
+
+- cd server && npm.cmd install && npm.cmd test && npm.cmd run typecheck
+- cd client && npm.cmd install && npm.cmd test && npm.cmd run typecheck && npm.cmd run build
+
+
+十七、主要使用者流程
+
+流程 A: 建立基礎資料並產生排程
+
+1. 到產品管理新增產品
+2. 到機台管理新增機台，設定支援產品與工作時段
+3. 視需要新增停機時間與換線規則
+4. 到訂單管理新增訂單或匯入 CSV
+5. 到排程頁選擇 objective
+6. 選擇 auto 或 manual 機台模式
+7. 產生排程
+8. 查看前三名推薦方案
+9. 進入甘特圖檢查排程
+
+流程 B: 手動調整排程
+
+1. 進入甘特圖
+2. 拖曳 production task 到新時間或新機台
+3. 前端呼叫 validate-adjustment
+4. 後端檢查 releaseTime、機台支援、工作時段、停機、換線
+5. 若合法，前端呼叫 adjust
+6. 後端重建相關機台任務
+7. 前端顯示調整前後指標與延遲影響
+8. 可 undo / redo / reset
+
+流程 C: 急單模擬
+
+1. 先有一批排程
+2. 進入情境模擬
+3. 選擇急單
+4. 輸入產品、數量、releaseTime、dueDate、priority
+5. 系統同時計算 insert 與 rebuild
+6. 比較急單延遲與對原訂單影響
+7. 視情況套用策略或回到排程頁重新產生
+
+流程 D: 機台故障模擬
+
+1. 先有一批排程
+2. 進入情境模擬
+3. 選擇故障機台
+4. 輸入故障開始與預估修復時間
+5. 系統新增虛擬 breakdown downtime 並重排
+6. 查看晚交訂單、可轉移機台、最晚安全修復時間
+7. 根據建議做實際機台調度或與客戶協調
+
+流程 E: AI 協助
+
+1. 設定 GEMINI_API_KEY
+2. 到 AI 頁確認啟用狀態
+3. 使用 quick question 或自由提問
+4. AI 可查產品、機台、訂單與目前排程
+5. 若 AI 建議建立訂單或重跑排程，會先產生 pending action
+6. 使用者確認後才會真正寫入或重排
+7. 成功後導向 orders 或 gantt
+
+
+十八、程式碼修改紀錄摘要
+
+最近已完成:
+
+- 修正訂單 CSV 匯入，不再直接 split(',')
+- 新增 parseCsv()，支援 quoted CSV 欄位
+- 新增 API 測試案例，覆蓋引號、逗號、欄位內換行與雙引號跳脫
+
+修改檔案:
+
+- server/src/modules/orders/router.ts
+- server/src/__tests__/api.test.ts
+
