@@ -55,11 +55,12 @@ export function OrdersPage() {
   const { data: orders, isLoading, error } = useOrders(filters);
   const { data: products } = useProducts();
   const { data: machines } = useMachines();
-  const { create, update, remove, duplicate, importCsv, updateStatus } = useOrderMutations();
+  const { create, update, remove, removeMany, duplicate, importCsv, updateStatus } = useOrderMutations();
 
   const [form, setForm] = useState<FormState | null>(null);
   const [formError, setFormError] = useState('');
   const [deleting, setDeleting] = useState<Order | null>(null);
+  const [deletingCompleted, setDeletingCompleted] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [csvResult, setCsvResult] = useState<{ imported: number; failed: number; results: { line: number; orderNumber: string; ok: boolean; error?: string }[] } | null>(null);
@@ -118,6 +119,7 @@ export function OrdersPage() {
   const pendingCount = (orders ?? []).filter((o) => o.status === 'pending').length;
   const activeCount = (orders ?? []).filter((o) => o.status === 'scheduled' || o.status === 'inProgress').length;
   const priorityCount = (orders ?? []).filter((o) => o.priority <= 2).length;
+  const completedOrders = (orders ?? []).filter((o) => o.status === 'completed');
 
   return (
     <div className="orders-page space-y-5">
@@ -127,6 +129,14 @@ export function OrdersPage() {
         description="集中管理交期、優先級與可用機台，讓每張工單都有清楚的排程條件。"
         actions={
           <>
+          <Button
+            variant="secondary"
+            onClick={() => setDeletingCompleted(true)}
+            disabled={completedOrders.length === 0}
+            title={completedOrders.length === 0 ? '目前沒有已完成訂單' : undefined}
+          >
+            一鍵刪除已完成訂單
+          </Button>
           <Button variant="secondary" onClick={() => { setCsvOpen(true); setCsvResult(null); }}>
             匯入 CSV
           </Button>
@@ -512,6 +522,21 @@ export function OrdersPage() {
             }
           }
           setDeleting(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deletingCompleted}
+        title="刪除已完成訂單"
+        message={`確定要刪除全部 ${completedOrders.length} 筆已完成訂單嗎?此操作無法復原。`}
+        onCancel={() => setDeletingCompleted(false)}
+        onConfirm={async () => {
+          try {
+            await removeMany.mutateAsync(completedOrders.map((o) => o.id));
+          } catch (e) {
+            alert(e instanceof ApiError ? e.message : '刪除失敗');
+          }
+          setDeletingCompleted(false);
         }}
       />
     </div>
