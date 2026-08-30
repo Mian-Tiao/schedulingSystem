@@ -3,8 +3,9 @@
  */
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiPost } from '../api/client';
-import { useMachines, useProducts, useScenarios } from '../api/hooks';
+import { useMachines, useOrders, useProducts, useScenarios } from '../api/hooks';
 import { Badge, Banner, Button, EmptyState, ErrorState, Field, inputCls, Loading, PageHeader, PageMetrics } from '../components/ui';
 import type { Machine, Metrics, OrderImpact, Task } from '../types';
 import { fmtDateTime, fmtMinutes, fmtTime, fromLocalInput, pct, toLocalInput } from '../utils/time';
@@ -50,37 +51,64 @@ export function SimulationPage() {
   const { data: scenarios, isLoading } = useScenarios();
   const { data: products } = useProducts();
   const { data: machines } = useMachines();
+  const { data: orders } = useOrders();
+  // task.orderId → 訂單編號,給預覽甘特圖標籤用(不能用 taskId 字串切割,訂單編號本身就含 "-")
+  const orderById = useMemo(() => new Map((orders ?? []).map((o) => [o.id, o.orderNumber])), [orders]);
   const [tab, setTab] = useState<Tab>('urgent');
   const top = scenarios?.find((s) => s.rank === 1) ?? null;
 
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [applyBusy, setApplyBusy] = useState<string | null>(null);
 
+  const invalidateAfterApply = () => {
+    qc.invalidateQueries({ queryKey: ['orders'] });
+    qc.invalidateQueries({ queryKey: ['scenarios'] });
+    qc.invalidateQueries({ queryKey: ['scenario'] });
+    qc.invalidateQueries({ queryKey: ['dashboard'] });
+  };
+
   const handleApplyUrgent = async (strategy: 'insert' | 'rebuild') => {
+    if (!top) return;
     setApplyBusy(strategy);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      if (strategy === 'insert') {
-        alert('急單插入策略套用成功！(模擬)');
-      } else {
-        alert('急單重排策略套用成功！(模擬)');
-      }
+      await apiPost('/api/simulations/urgent-order/apply', {
+        scenarioId: top.scenarioId,
+        strategy,
+        order: {
+          orderNumber: urgentForm.orderNumber.trim(),
+          productId: urgentForm.productId || products?.[0]?.id,
+          quantity: Number(urgentForm.quantity),
+          releaseTime: fromLocalInput(urgentForm.releaseTime),
+          dueDate: fromLocalInput(urgentForm.dueDate),
+          priority: Number(urgentForm.priority),
+        },
+      });
+      invalidateAfterApply();
+      alert(strategy === 'insert' ? '急單插入策略套用成功！已寫入正式排程。' : '急單重排策略套用成功！已寫入正式排程。');
       navigate('/gantt');
-    } catch {
-      alert('套用失敗，請重試');
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : '套用失敗，請重試');
     } finally {
       setApplyBusy(null);
     }
   };
 
   const handleApplyBreakdown = async () => {
+    if (!top) return;
     setApplyBusy('breakdown');
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      alert('故障排程套用成功！(模擬)');
+      await apiPost('/api/simulations/machine-breakdown/apply', {
+        scenarioId: top.scenarioId,
+        machineId: bdForm.machineId || machines?.[0]?.id,
+        startTime: fromLocalInput(bdForm.startTime),
+        estimatedRepairTime: fromLocalInput(bdForm.estimatedRepairTime),
+      });
+      invalidateAfterApply();
+      alert('故障排程套用成功！已寫入正式排程與機台停機紀錄。');
       navigate('/gantt');
-    } catch {
-      alert('套用失敗，請重試');
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : '套用失敗，請重試');
     } finally {
       setApplyBusy(null);
     }
@@ -259,6 +287,8 @@ export function SimulationPage() {
                       tasks={urgentResult.insert.tasks}
                       breakdown={null}
                       machines={machines ?? []}
+                      orderById={orderById}
+                      pendingOrderNumber={urgentResult.urgentOrder.orderNumber}
                     />
                     <div className="mt-3">
                       <Button
@@ -309,6 +339,8 @@ export function SimulationPage() {
                   tasks={urgentResult.rebuild.tasks}
                   breakdown={null}
                   machines={machines ?? []}
+                  orderById={orderById}
+                  pendingOrderNumber={urgentResult.urgentOrder.orderNumber}
                 />
                 <div className="mt-3">
                   <Button
@@ -442,6 +474,7 @@ export function SimulationPage() {
                 tasks={bdResult.withEstimatedRepair.tasks}
                 breakdown={bdResult.breakdown}
                 machines={machines ?? []}
+                orderById={orderById}
               />
               <div className="mt-3">
                 <Button
@@ -540,7 +573,21 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   maintenance: '維保',
 };
 
-function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown: { machineId: string; startTime: string; estimatedRepairTime: string } | null; machines: Machine[] }) {
+function GanttPreview({
+  tasks,
+  breakdown,
+  machines,
+  orderById,
+  pendingOrderNumber,
+}: {
+  tasks: Task[];
+  breakdown: { machineId: string; startTime: string; estimatedRepairTime: string } | null;
+  machines: Machine[];
+  /** task.orderId → 訂單編號 */
+  orderById: Map<string, string>;
+  /** 模擬中、尚未真的建立的急單編號(訂單編號本身含 "-",不能靠切割 taskId 字串取得) */
+  pendingOrderNumber?: string;
+}) {
   const timeRange = useMemo(() => {
     if (tasks.length === 0) return null;
     let min = Infinity;
@@ -674,9 +721,9 @@ function GanttPreview({ tasks, breakdown, machines }: { tasks: Task[]; breakdown
                       const left = xOf(t.startTime);
                       const width = Math.max(2, wOf(t.startTime, t.endTime));
                       const isProduction = t.taskType === 'production';
-                      const taskName = t.taskId.includes('-production')
-                        ? t.taskId.split('-')[2] || t.taskId.split('-')[1]
-                        : t.taskId.split('-')[1] || t.taskId.split('-')[0];
+                      // 訂單編號本身常含 "-"(如 PO-001、URGENT-001),不能用 taskId 切割字串猜,
+                      // 一律查真正的訂單表;急單套用前還沒真的建立,用 pendingOrderNumber 補上。
+                      const taskName = (t.orderId ? orderById.get(t.orderId) : undefined) ?? pendingOrderNumber ?? '';
                       const taskStyle: React.CSSProperties = {
                         left,
                         width,
