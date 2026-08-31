@@ -28,16 +28,22 @@ interface UrgentResult {
   };
 }
 
+interface BreakdownScenario {
+  metrics: Metrics;
+  tasks: Task[];
+  impacts: OrderImpact[];
+  lateOrders: { orderNumber: string; tardinessMinutes: number; priority: number }[];
+  lateOrderCount: number;
+  unscheduled: { orderNumber: string; reason: string }[];
+}
+
 interface BreakdownResult {
   baseline: { metrics: Metrics };
   breakdown: { machineId: string; machineName: string; startTime: string; estimatedRepairTime: string };
-  withEstimatedRepair: {
-    metrics: Metrics;
-    tasks: Task[];
-    impacts: OrderImpact[];
-    lateOrders: { orderNumber: string; tardinessMinutes: number; priority: number }[];
-    lateOrderCount: number;
-  };
+  /** 方案 A:局部修復——只重排被故障波及的訂單,其餘機台/訂單原封不動 */
+  localRepair: BreakdownScenario & { affectedOrderNumbers: string[] };
+  /** 方案 B:全局重排——故障當成新 downtime,全部訂單、全部機台重新跑一次演算法 */
+  rebuild: BreakdownScenario;
   reverseAnalysis: { latestSafeRepairTime: string | null; message: string };
   suggestions: {
     minimumLateOrderCount: number;
@@ -94,18 +100,23 @@ export function SimulationPage() {
     }
   };
 
-  const handleApplyBreakdown = async () => {
+  const handleApplyBreakdown = async (strategy: 'localRepair' | 'rebuild') => {
     if (!top) return;
-    setApplyBusy('breakdown');
+    setApplyBusy(`breakdown-${strategy}`);
     try {
       await apiPost('/api/simulations/machine-breakdown/apply', {
         scenarioId: top.scenarioId,
+        strategy,
         machineId: bdForm.machineId || machines?.[0]?.id,
         startTime: fromLocalInput(bdForm.startTime),
         estimatedRepairTime: fromLocalInput(bdForm.estimatedRepairTime),
       });
       invalidateAfterApply();
-      alert('故障排程套用成功！已寫入正式排程與機台停機紀錄。');
+      alert(
+        strategy === 'localRepair'
+          ? '局部修復套用成功！已寫入正式排程與機台停機紀錄,其餘機台與訂單不受影響。'
+          : '全局重排套用成功！已寫入正式排程與機台停機紀錄。',
+      );
       navigate('/gantt');
     } catch (e) {
       alert(e instanceof ApiError ? e.message : '套用失敗，請重試');
@@ -410,29 +421,7 @@ export function SimulationPage() {
           {bdResult && (
             <div className="mt-4 space-y-4">
               <div className="scenario-result">
-                <h3 className="mb-2 text-sm font-semibold text-slate-700">
-                  情境一:按預估修復時間({fmtDateTime(bdResult.breakdown.estimatedRepairTime)} 修復)
-                </h3>
-                <MetricsCompare before={bdResult.baseline.metrics} after={bdResult.withEstimatedRepair.metrics} />
-                {bdResult.withEstimatedRepair.lateOrders.length === 0 ? (
-                  <Banner tone="success">在此修復時間下,沒有訂單會逾期。</Banner>
-                ) : (
-                  <>
-                    <p className="mt-2 text-sm text-red-600">將有 {bdResult.withEstimatedRepair.lateOrderCount} 張訂單逾期:</p>
-                    <ul className="mt-1 space-y-0.5 text-sm">
-                      {bdResult.withEstimatedRepair.lateOrders.map((o) => (
-                        <li key={o.orderNumber}>
-                          {o.orderNumber} — 延遲 {fmtMinutes(o.tardinessMinutes)}
-                          {o.priority <= 2 && <Badge tone="red"> 重要訂單</Badge>}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-
-              <div className="scenario-result">
-                <h3 className="mb-2 text-sm font-semibold text-slate-700">情境二:反向分析 — 最晚何時要修好?</h3>
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">反向分析 — 最晚何時要修好?</h3>
                 <Banner tone={bdResult.reverseAnalysis.latestSafeRepairTime ? 'info' : 'warn'}>
                   {bdResult.reverseAnalysis.latestSafeRepairTime
                     ? `最晚須於 ${fmtDateTime(bdResult.reverseAnalysis.latestSafeRepairTime)} 前修復,重要訂單(優先級 ≤ 2)才不會逾期。`
@@ -440,11 +429,11 @@ export function SimulationPage() {
                 </Banner>
               </div>
 
-              {bdResult.withEstimatedRepair.lateOrders.length > 0 && (
+              {bdResult.rebuild.lateOrders.length > 0 && (
                 <div className="scenario-result is-recommendation">
                   <h3 className="mb-2 text-sm font-semibold text-slate-700">建議</h3>
                   <ul className="space-y-1 text-sm text-slate-600">
-                    <li>・最少會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
+                    <li>・即使全局重排,最少也會有 {bdResult.suggestions.minimumLateOrderCount} 張訂單逾期</li>
                     <li>
                       ・可考慮轉移工作到:
                       {(() => {
@@ -470,20 +459,95 @@ export function SimulationPage() {
                 </div>
               )}
 
-              <GanttPreview
-                tasks={bdResult.withEstimatedRepair.tasks}
-                breakdown={bdResult.breakdown}
-                machines={machines ?? []}
-                orderById={orderById}
-              />
-              <div className="mt-3">
-                <Button
-                  variant="primary"
-                  onClick={handleApplyBreakdown}
-                  disabled={applyBusy !== null}
-                >
-                  {applyBusy === 'breakdown' ? '套用中…' : '套用故障調整'}
-                </Button>
+              <div className="simulation-result-grid grid gap-4 lg:grid-cols-2">
+                <div className="scenario-result">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-700">方案 A:局部修復(其他機台、其他訂單不動)</h3>
+                  <MetricsCompare before={bdResult.baseline.metrics} after={bdResult.localRepair.metrics} />
+                  {bdResult.localRepair.affectedOrderNumbers.length > 0 ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      被波及、重新安排的訂單:{bdResult.localRepair.affectedOrderNumbers.join('、')}
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">故障區間內這台機台沒有排到任何訂單,不影響任何訂單。</p>
+                  )}
+                  {bdResult.localRepair.lateOrders.length === 0 ? (
+                    <Banner tone="success">此策略下,沒有訂單會逾期。</Banner>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-sm text-red-600">將有 {bdResult.localRepair.lateOrderCount} 張訂單逾期:</p>
+                      <ul className="mt-1 space-y-0.5 text-sm">
+                        {bdResult.localRepair.lateOrders.map((o) => (
+                          <li key={o.orderNumber}>
+                            {o.orderNumber} — 延遲 {fmtMinutes(o.tardinessMinutes)}
+                            {o.priority <= 2 && <Badge tone="red"> 重要訂單</Badge>}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {bdResult.localRepair.unscheduled.length > 0 && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                      <p className="font-semibold">⚠️ 以下訂單重新安排後仍排不進去:</p>
+                      <ul className="list-disc pl-4 mt-1">
+                        {bdResult.localRepair.unscheduled.map((u) => (
+                          <li key={u.orderNumber}>
+                            {u.orderNumber}: {u.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <GanttPreview
+                    tasks={bdResult.localRepair.tasks}
+                    breakdown={bdResult.breakdown}
+                    machines={machines ?? []}
+                    orderById={orderById}
+                  />
+                  <div className="mt-3">
+                    <Button
+                      variant="primary"
+                      onClick={() => handleApplyBreakdown('localRepair')}
+                      disabled={applyBusy !== null}
+                    >
+                      {applyBusy === 'breakdown-localRepair' ? '套用中…' : '套用此策略'}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="scenario-result">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-700">方案 B:全局重排(可能調整所有訂單)</h3>
+                  <MetricsCompare before={bdResult.baseline.metrics} after={bdResult.rebuild.metrics} />
+                  {bdResult.rebuild.lateOrders.length === 0 ? (
+                    <Banner tone="success">此策略下,沒有訂單會逾期。</Banner>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-sm text-red-600">將有 {bdResult.rebuild.lateOrderCount} 張訂單逾期:</p>
+                      <ul className="mt-1 space-y-0.5 text-sm">
+                        {bdResult.rebuild.lateOrders.map((o) => (
+                          <li key={o.orderNumber}>
+                            {o.orderNumber} — 延遲 {fmtMinutes(o.tardinessMinutes)}
+                            {o.priority <= 2 && <Badge tone="red"> 重要訂單</Badge>}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  <GanttPreview
+                    tasks={bdResult.rebuild.tasks}
+                    breakdown={bdResult.breakdown}
+                    machines={machines ?? []}
+                    orderById={orderById}
+                  />
+                  <div className="mt-3">
+                    <Button
+                      variant="primary"
+                      onClick={() => handleApplyBreakdown('rebuild')}
+                      disabled={applyBusy !== null}
+                    >
+                      {applyBusy === 'breakdown-rebuild' ? '套用中…' : '套用此策略'}
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
           )}

@@ -10,8 +10,10 @@ import {
   compareImpacts,
   insertUrgentOrder,
   latestSafeRepairTime,
+  localRepairBreakdown,
   rebuildWithUrgent,
   simulateBreakdown,
+  type BreakdownSimulation,
   type OrderImpact,
 } from './service.js';
 
@@ -114,16 +116,28 @@ simulationsRouter.post(
   }),
 );
 
-const breakdownSchema = z
-  .object({
-    scenarioId: z.string().min(1, '請先產生排程方案'),
-    machineId: z.string().min(1, '請選擇故障機台'),
-    startTime: z.string().datetime({ offset: true, message: '故障開始時間須為 ISO 8601 格式' }),
-    estimatedRepairTime: z.string().datetime({ offset: true, message: '預估修復時間須為 ISO 8601 格式' }),
-  })
-  .refine((b) => new Date(b.estimatedRepairTime) > new Date(b.startTime), {
-    message: '預估修復時間必須晚於故障開始時間',
-  });
+const breakdownInputSchema = z.object({
+  scenarioId: z.string().min(1, '請先產生排程方案'),
+  machineId: z.string().min(1, '請選擇故障機台'),
+  startTime: z.string().datetime({ offset: true, message: '故障開始時間須為 ISO 8601 格式' }),
+  estimatedRepairTime: z.string().datetime({ offset: true, message: '預估修復時間須為 ISO 8601 格式' }),
+});
+const breakdownTimeOrder = (b: { startTime: string; estimatedRepairTime: string }) =>
+  new Date(b.estimatedRepairTime) > new Date(b.startTime);
+const breakdownSchema = breakdownInputSchema.refine(breakdownTimeOrder, {
+  message: '預估修復時間必須晚於故障開始時間',
+});
+
+function breakdownScenarioToJson(sim: BreakdownSimulation) {
+  return {
+    metrics: sim.metrics,
+    tasks: sim.tasks.map(taskToJson),
+    impacts: sim.impacts.map(impactToJson),
+    lateOrders: sim.lateOrders,
+    lateOrderCount: sim.lateOrders.length,
+    unscheduled: sim.unscheduled,
+  };
+}
 
 simulationsRouter.post(
   '/machine-breakdown',
@@ -140,14 +154,16 @@ simulationsRouter.post(
     const start = Date.parse(body.startTime);
     const repairEnd = Date.parse(body.estimatedRepairTime);
 
-    // 情境一:按預估修復時間,哪些訂單延遲、延遲多久
-    const sim = simulateBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd);
+    // 方案 A:局部修復——只重排被故障波及的訂單,其餘機台/訂單原封不動
+    const localRepair = localRepairBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd);
+    // 方案 B:全局重排——故障當成新 downtime,全部訂單、全部機台重新跑一次演算法
+    const rebuild = simulateBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd);
 
-    // 情境二:反向計算最晚安全修復時間
+    // 情境二:反向計算最晚安全修復時間(以全局重排的結果為準)
     const safeRepair = latestSafeRepairTime(input, scenario.algorithm, body.machineId, start, repairEnd);
 
-    // 無法完全避免時的建議
-    const lateOrderIds = new Set(sim.lateOrders.map((o) => o.orderId));
+    // 無法完全避免時的建議(以全局重排——理論上最佳的結果——為準)
+    const lateOrderIds = new Set(rebuild.lateOrders.map((o) => o.orderId));
     const lateOrdersFull = input.orders.filter((o) => lateOrderIds.has(o.id));
     const lateProductIds = new Set(lateOrdersFull.map((o) => o.productId));
     const transferMachines = input.machines
@@ -158,10 +174,10 @@ simulationsRouter.post(
           [...lateProductIds].some((p) => m.supportedProductIds.includes(p)),
       )
       .map((m) => ({ machineId: m.id, machineCode: m.machineCode, machineName: m.machineName }));
-    const priorityOrders = sim.lateOrders
+    const priorityOrders = rebuild.lateOrders
       .filter((o) => o.priority <= 2)
       .map((o) => o.orderNumber);
-    const negotiableOrders = sim.lateOrders
+    const negotiableOrders = rebuild.lateOrders
       .filter((o) => o.priority >= 4)
       .map((o) => o.orderNumber);
 
@@ -173,13 +189,8 @@ simulationsRouter.post(
         startTime: body.startTime,
         estimatedRepairTime: body.estimatedRepairTime,
       },
-      withEstimatedRepair: {
-        metrics: sim.metrics,
-        tasks: sim.tasks.map(taskToJson),
-        impacts: sim.impacts.map(impactToJson),
-        lateOrders: sim.lateOrders,
-        lateOrderCount: sim.lateOrders.length,
-      },
+      localRepair: { ...breakdownScenarioToJson(localRepair), affectedOrderNumbers: localRepair.affectedOrderNumbers },
+      rebuild: breakdownScenarioToJson(rebuild),
       reverseAnalysis: {
         latestSafeRepairTime: safeRepair ? new Date(safeRepair).toISOString() : null,
         message: safeRepair
@@ -187,7 +198,7 @@ simulationsRouter.post(
           : '即使立即修復,仍無法完全避免重要訂單逾期',
       },
       suggestions: {
-        minimumLateOrderCount: sim.lateOrders.length,
+        minimumLateOrderCount: rebuild.lateOrders.length,
         transferMachines,
         priorityOrders,
         negotiableOrders,
@@ -263,10 +274,14 @@ simulationsRouter.post(
   }),
 );
 
+const applyBreakdownSchema = breakdownInputSchema
+  .extend({ strategy: z.enum(['localRepair', 'rebuild']) })
+  .refine(breakdownTimeOrder, { message: '預估修復時間必須晚於故障開始時間' });
+
 simulationsRouter.post(
   '/machine-breakdown/apply',
   wrap(async (req, res) => {
-    const body = breakdownSchema.parse(req.body);
+    const body = applyBreakdownSchema.parse(req.body);
     const { scenario, anchorTime } = await loadScenario(body.scenarioId);
     const input = await loadSchedulingInput(anchorTime, scenarioOrderIds(scenario.tasks));
     const machine = input.machines.find((m) => m.id === body.machineId);
@@ -274,7 +289,11 @@ simulationsRouter.post(
 
     const start = Date.parse(body.startTime);
     const repairEnd = Date.parse(body.estimatedRepairTime);
-    const sim = simulateBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd);
+
+    const result =
+      body.strategy === 'localRepair'
+        ? localRepairBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd)
+        : simulateBreakdown(input, scenario.algorithm, scenario.tasks, body.machineId, start, repairEnd);
 
     // 真的把故障時段記錄成機台停機,之後重新排程也會考慮進去
     await prisma.machineDowntime.create({
@@ -283,11 +302,12 @@ simulationsRouter.post(
         type: 'breakdown',
         startTime: new Date(start),
         endTime: new Date(repairEnd),
-        reason: '情境模擬套用:機台故障',
+        reason: body.strategy === 'localRepair' ? '情境模擬套用:機台故障(局部修復)' : '情境模擬套用:機台故障(全局重排)',
       },
     });
-    await replaceScenarioTasks(scenario.scenarioId, sim.tasks, sim.metrics, false);
+    // 局部修復只動了被波及的訂單,標記人工調整;全局重排等同一次正常的演算法重跑
+    await replaceScenarioTasks(scenario.scenarioId, result.tasks, result.metrics, body.strategy === 'localRepair');
 
-    res.json({ ok: true, lateOrderCount: sim.lateOrders.length });
+    res.json({ ok: true, lateOrderCount: result.lateOrders.length, unscheduled: result.unscheduled });
   }),
 );

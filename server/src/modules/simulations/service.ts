@@ -6,6 +6,7 @@ import {
   computePlacement,
   eligibleMachines,
   runAlgorithm,
+  scheduleOrders,
 } from '../scheduling/engine/engine.js';
 import type {
   AlgorithmId,
@@ -194,9 +195,30 @@ export interface BreakdownSimulation {
   metrics: ScheduleMetrics;
   impacts: OrderImpact[];
   lateOrders: { orderId: string; orderNumber: string; tardinessMinutes: number; priority: number }[];
+  /** 規劃期間內排不進去的訂單 */
+  unscheduled: { orderNumber: string; reason: string }[];
 }
 
-/** 以指定故障時段重跑排程 */
+function lateOrdersOf(
+  tasks: ScheduledTask[],
+  orders: ProductionOrder[],
+): { orderId: string; orderNumber: string; tardinessMinutes: number; priority: number }[] {
+  const completions = completionsOf(tasks);
+  return orders
+    .map((o) => {
+      const c = completions.get(o.id);
+      const tardiness = c ? Math.max(0, Math.round((c - o.dueDate) / 60_000)) : 0;
+      return { orderId: o.id, orderNumber: o.orderNumber, tardinessMinutes: tardiness, priority: o.priority };
+    })
+    .filter((o) => o.tardinessMinutes > 0)
+    .sort((a, b) => b.tardinessMinutes - a.tardinessMinutes);
+}
+
+function breakdownDowntimeOf(machineId: string, startTime: number, repairEndTime: number, reason: string): MachineDowntime {
+  return { id: 'sim-breakdown', machineId, type: 'breakdown', startTime, endTime: repairEndTime, reason };
+}
+
+/** 方案 B「全局重排」:故障當成新 downtime 塞入,全部訂單、全部機台重新跑一次演算法 */
 export function simulateBreakdown(
   input: SchedulingInput,
   algorithm: AlgorithmId,
@@ -205,28 +227,95 @@ export function simulateBreakdown(
   startTime: number,
   repairEndTime: number,
 ): BreakdownSimulation {
-  const breakdownDowntime: MachineDowntime = {
-    id: 'sim-breakdown',
+  const simInput: SchedulingInput = {
+    ...input,
+    downtimes: [...input.downtimes, breakdownDowntimeOf(machineId, startTime, repairEndTime, '故障模擬')],
+  };
+  const r = runAlgorithm(simInput, algorithm);
+  return {
+    tasks: r.tasks,
+    metrics: metricsOf(simInput, r.tasks),
+    impacts: compareImpacts(baselineTasks, r.tasks, input.orders),
+    lateOrders: lateOrdersOf(r.tasks, input.orders),
+    unscheduled: r.unscheduledOrders.map((u) => ({ orderNumber: u.orderNumber, reason: u.reason })),
+  };
+}
+
+export interface LocalRepairResult extends BreakdownSimulation {
+  /** 被故障波及、需要重新安排的訂單編號 */
+  affectedOrderNumbers: string[];
+}
+
+/**
+ * 方案 A「局部修復」:只把「排在故障機台上、時間跟故障區間重疊」的訂單抽出來重新安排
+ * (可能落在原機台修復後,也可能轉到別台機台),其餘機台、其餘訂單的既有任務完全不動。
+ * 重用 scheduleOrders 對被抽出的訂單依目前排程演算法的排序規則逐一找最早可完成的插槽,
+ * 跟 runAlgorithm 內部排程邏輯是同一套,差別只在於只處理被波及的訂單。
+ */
+export function localRepairBreakdown(
+  input: SchedulingInput,
+  algorithm: AlgorithmId,
+  baselineTasks: ScheduledTask[],
+  machineId: string,
+  startTime: number,
+  repairEndTime: number,
+): LocalRepairResult {
+  const simInput: SchedulingInput = {
+    ...input,
+    downtimes: [...input.downtimes, breakdownDowntimeOf(machineId, startTime, repairEndTime, '故障模擬(局部修復)')],
+  };
+
+  // 找出排在故障機台上、跟故障區間重疊的任務,把它們所屬的訂單整張抽出(cleaning/setup/production 是同一張訂單的連續動作,不能只抽一段)
+  const affectedOrderIds = new Set(
+    baselineTasks
+      .filter((t) => t.machineId === machineId && t.orderId && t.startTime < repairEndTime && t.endTime > startTime)
+      .map((t) => t.orderId!),
+  );
+  const fixedTasks = baselineTasks.filter((t) => !(t.orderId && affectedOrderIds.has(t.orderId)));
+
+  const orderById = new Map(input.orders.map((o) => [o.id, o]));
+  const affectedOrders = [...affectedOrderIds]
+    .map((id) => orderById.get(id))
+    .filter((o): o is ProductionOrder => Boolean(o));
+
+  // 被波及的訂單抽掉之後,其餘任務(含其他機台、故障機台上沒撞到的部分)原封不動當作既定事實
+  const states = statesFromTasks(simInput, fixedTasks);
+  const seqByMachine = new Map<string, number>();
+  for (const t of fixedTasks) {
+    seqByMachine.set(t.machineId, Math.max(seqByMachine.get(t.machineId) ?? 0, t.sequence));
+  }
+  const horizonEnd = simInput.anchorTime + (simInput.horizonDays ?? 60) * 24 * 3600_000;
+  const newTasks: ScheduledTask[] = [...fixedTasks];
+  const { unscheduledOrders } = scheduleOrders(
+    affectedOrders,
+    algorithm,
+    states,
+    simInput,
+    horizonEnd,
+    newTasks,
+    seqByMachine,
+    'repair',
+  );
+  // 補上這段故障本身的顯示區塊(甘特圖用);其餘既有維護/故障區塊已包含在 fixedTasks 裡
+  newTasks.push({
+    id: `repair-breakdown-${machineId}`,
+    orderId: null,
     machineId,
-    type: 'breakdown',
+    taskType: 'maintenance',
     startTime,
     endTime: repairEndTime,
-    reason: '故障模擬',
+    sequence: 0,
+    isManuallyAdjusted: false,
+  });
+
+  return {
+    tasks: newTasks,
+    metrics: metricsOf(simInput, newTasks),
+    impacts: compareImpacts(baselineTasks, newTasks, input.orders),
+    lateOrders: lateOrdersOf(newTasks, input.orders),
+    affectedOrderNumbers: affectedOrders.map((o) => o.orderNumber),
+    unscheduled: unscheduledOrders.map((u) => ({ orderNumber: u.orderNumber, reason: u.reason })),
   };
-  const simInput: SchedulingInput = { ...input, downtimes: [...input.downtimes, breakdownDowntime] };
-  const r = runAlgorithm(simInput, algorithm);
-  const metrics = metricsOf(simInput, r.tasks);
-  const impacts = compareImpacts(baselineTasks, r.tasks, input.orders);
-  const completions = completionsOf(r.tasks);
-  const lateOrders = input.orders
-    .map((o) => {
-      const c = completions.get(o.id);
-      const tardiness = c ? Math.max(0, Math.round((c - o.dueDate) / 60_000)) : 0;
-      return { orderId: o.id, orderNumber: o.orderNumber, tardinessMinutes: tardiness, priority: o.priority };
-    })
-    .filter((o) => o.tardinessMinutes > 0)
-    .sort((a, b) => b.tardinessMinutes - a.tardinessMinutes);
-  return { tasks: r.tasks, metrics, impacts, lateOrders };
 }
 
 /** 重要訂單:priority ≤ 2(ASSUMPTIONS #24) */

@@ -325,7 +325,7 @@ describe('排程產生', () => {
     expect(res.body.baseline.metrics).toBeDefined();
   });
 
-  it('機台故障模擬:回傳延遲影響與反向分析', async () => {
+  it('機台故障模擬:回傳局部修復與全局重排兩種策略、反向分析', async () => {
     const res = await request(app).post('/api/simulations/machine-breakdown').send({
       scenarioId: scenarioIds[0],
       machineId: machine1,
@@ -333,9 +333,43 @@ describe('排程產生', () => {
       estimatedRepairTime: '2026-08-10T15:00:00+08:00',
     });
     expect(res.status).toBe(200);
-    expect(res.body.withEstimatedRepair.metrics).toBeDefined();
+    expect(res.body.localRepair.metrics).toBeDefined();
+    expect(res.body.localRepair.affectedOrderNumbers).toBeDefined();
+    expect(res.body.rebuild.metrics).toBeDefined();
     expect(res.body.reverseAnalysis.message.length).toBeGreaterThan(0);
     expect(res.body.suggestions).toBeDefined();
+  });
+
+  it('機台故障局部修復套用:只有故障機台上被波及的訂單改變,其他機台完全不動', async () => {
+    // 自成一組:用全部機台重新產生一次排程,確保有多台機台可以比對「有沒有被動到」
+    const generated = await request(app)
+      .post('/api/schedules/generate')
+      .send({ objective: 'ON_TIME_DELIVERY', anchorTime: ANCHOR });
+    expect(generated.status).toBe(200);
+    const scenarioId = generated.body.scenarios[0].scenarioId as string;
+
+    const before = await request(app).get(`/api/schedules/${scenarioId}`);
+    const otherMachineTasksBefore = before.body.tasks.filter(
+      (t: { machineId: string }) => t.machineId !== machine1,
+    );
+
+    const apply = await request(app).post('/api/simulations/machine-breakdown/apply').send({
+      scenarioId,
+      strategy: 'localRepair',
+      machineId: machine1,
+      startTime: '2026-08-10T08:00:00+08:00',
+      estimatedRepairTime: '2026-08-10T15:00:00+08:00',
+    });
+    expect(apply.status).toBe(200);
+    expect(apply.body.ok).toBe(true);
+
+    const after = await request(app).get(`/api/schedules/${scenarioId}`);
+    expect(after.body.isManuallyAdjusted).toBe(true);
+    // 其他機台的任務(id、時間)要跟套用前一模一樣,一個都不能少也不能變
+    const otherMachineTasksAfter = after.body.tasks.filter(
+      (t: { machineId: string }) => t.machineId !== machine1,
+    );
+    expect(otherMachineTasksAfter).toEqual(otherMachineTasksBefore);
   });
 });
 
