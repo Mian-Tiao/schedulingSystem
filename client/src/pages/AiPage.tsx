@@ -30,7 +30,7 @@ interface ChatMessage {
 
 interface PendingAction {
   id: string;
-  toolName: 'create_order' | 'run_scheduling';
+  toolName: 'create_order' | 'run_scheduling' | 'update_order';
   title: string;
   description: string;
   details: { label: string; value: string }[];
@@ -203,7 +203,7 @@ export function AiPage() {
       <PageHeader
         eyebrow="DECISION COPILOT"
         title="AI 決策諮詢"
-        description="用自然語言查詢營運資料、建立訂單與執行排程；所有寫入操作都會先讓你確認。"
+        description="用自然語言查詢與分析排程、預演異常情境，也能建立或修改訂單；所有寫入操作都會先讓你確認。"
         actions={status?.enabled ? <Badge tone="green">✓ Gemini 已啟用</Badge> : <Badge tone="slate">Gemini 未啟用</Badge>}
       />
 
@@ -217,7 +217,7 @@ export function AiPage() {
               <p>
                 {hasSchedule
                   ? `目前有 ${scenarios?.length ?? 0} 個排程方案可供分析。`
-                  : '可直接查詢資料或請 AI 執行排程。'}
+                  : '可直接查詢資料、預演情境或請 AI 執行排程。'}
               </p>
             </div>
           </div>
@@ -231,7 +231,7 @@ export function AiPage() {
 
           <div className="ai-context-note">
             <span aria-hidden>i</span>
-            <p>AI 可查詢資料並提出操作；新增訂單或執行排程前一定會顯示確認卡。</p>
+            <p>AI 可分析排程與預演情境；新增、修改訂單或執行排程前一定會顯示確認卡。</p>
           </div>
 
           <div className="quick-question-list">
@@ -285,7 +285,7 @@ export function AiPage() {
               <div className="ai-empty-conversation">
                 <span aria-hidden>✦</span>
                 <h3>從問題或操作指令開始</h3>
-                <p>可以查詢逾期與瓶頸，也可以直接要求新增訂單或執行排程。</p>
+                <p>可以查詢逾期與瓶頸、預演急單或故障，也可以直接要求建立或修改訂單。</p>
               </div>
             ) : (
               <div className="space-y-4">

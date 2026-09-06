@@ -189,6 +189,23 @@ describe('訂單 CRUD', () => {
     expect(res.body.results[1].error).toContain('找不到產品');
   });
 
+  it('CSV 匯入支援引號、逗號與欄位內換行', async () => {
+    const csv = [
+      'orderNumber,productCode,quantity,releaseTime,dueDate,processingTime,priority,notes',
+      '"TO-CSV-QUOTED","TP-A","2","2026-08-10T08:00:00+08:00","2026-08-11T12:00:00+08:00","","2","需要,加急\n備註含 ""雙引號"""',
+    ].join('\n');
+
+    const res = await request(app).post('/api/orders/import').send({ csv });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.failed).toBe(0);
+
+    const list = await request(app).get('/api/orders').query({ search: 'TO-CSV-QUOTED' });
+    expect(list.body[0].notes).toContain('需要,加急');
+    expect(list.body[0].notes).toContain('"雙引號"');
+    expect(list.body[0].notes).toContain('\n');
+  });
+
   it('複製訂單', async () => {
     const list = await request(app).get('/api/orders');
     const t1 = list.body.find((o: { orderNumber: string }) => o.orderNumber === 'TO-001');
@@ -308,7 +325,7 @@ describe('排程產生', () => {
     expect(res.body.baseline.metrics).toBeDefined();
   });
 
-  it('機台故障模擬:回傳延遲影響與反向分析', async () => {
+  it('機台故障模擬:回傳局部修復與全局重排兩種策略、反向分析', async () => {
     const res = await request(app).post('/api/simulations/machine-breakdown').send({
       scenarioId: scenarioIds[0],
       machineId: machine1,
@@ -316,9 +333,43 @@ describe('排程產生', () => {
       estimatedRepairTime: '2026-08-10T15:00:00+08:00',
     });
     expect(res.status).toBe(200);
-    expect(res.body.withEstimatedRepair.metrics).toBeDefined();
+    expect(res.body.localRepair.metrics).toBeDefined();
+    expect(res.body.localRepair.affectedOrderNumbers).toBeDefined();
+    expect(res.body.rebuild.metrics).toBeDefined();
     expect(res.body.reverseAnalysis.message.length).toBeGreaterThan(0);
     expect(res.body.suggestions).toBeDefined();
+  });
+
+  it('機台故障局部修復套用:只有故障機台上被波及的訂單改變,其他機台完全不動', async () => {
+    // 自成一組:用全部機台重新產生一次排程,確保有多台機台可以比對「有沒有被動到」
+    const generated = await request(app)
+      .post('/api/schedules/generate')
+      .send({ objective: 'ON_TIME_DELIVERY', anchorTime: ANCHOR });
+    expect(generated.status).toBe(200);
+    const scenarioId = generated.body.scenarios[0].scenarioId as string;
+
+    const before = await request(app).get(`/api/schedules/${scenarioId}`);
+    const otherMachineTasksBefore = before.body.tasks.filter(
+      (t: { machineId: string }) => t.machineId !== machine1,
+    );
+
+    const apply = await request(app).post('/api/simulations/machine-breakdown/apply').send({
+      scenarioId,
+      strategy: 'localRepair',
+      machineId: machine1,
+      startTime: '2026-08-10T08:00:00+08:00',
+      estimatedRepairTime: '2026-08-10T15:00:00+08:00',
+    });
+    expect(apply.status).toBe(200);
+    expect(apply.body.ok).toBe(true);
+
+    const after = await request(app).get(`/api/schedules/${scenarioId}`);
+    expect(after.body.isManuallyAdjusted).toBe(true);
+    // 其他機台的任務(id、時間)要跟套用前一模一樣,一個都不能少也不能變
+    const otherMachineTasksAfter = after.body.tasks.filter(
+      (t: { machineId: string }) => t.machineId !== machine1,
+    );
+    expect(otherMachineTasksAfter).toEqual(otherMachineTasksBefore);
   });
 });
 
@@ -376,6 +427,76 @@ describe('AI 工具確認流程', () => {
     const repeated = await request(app).post(`/api/ai/actions/${pending.id}/confirm`).send({});
     expect(repeated.status).toBe(404);
     expect(await prisma.productionOrder.count({ where: { orderNumber: 'TO-AI-001' } })).toBe(1);
+  });
+
+  it('排程分析與情境模擬為唯讀工具', async () => {
+    const analysis = (await executeReadTool({ name: 'get_schedule_analysis', args: {} })) as {
+      hasSchedule: boolean;
+      scenarios: unknown[];
+      machineLoads: unknown[];
+    };
+    expect(analysis.hasSchedule).toBe(true);
+    expect(analysis.scenarios).toHaveLength(4);
+    expect(analysis.machineLoads.length).toBeGreaterThan(0);
+
+    const downtimeCount = await prisma.machineDowntime.count();
+    const simulation = (await executeReadTool({
+      name: 'run_simulation',
+      args: {
+        simulationType: 'machine_breakdown',
+        machine: 'TM-01',
+        startTime: '2026-08-10T08:00:00+08:00',
+        estimatedRepairTime: '2026-08-10T13:00:00+08:00',
+      },
+    })) as {
+      previewOnly: boolean;
+      localRepair: { lateOrderCount: number };
+      rebuild: { lateOrderCount: number };
+    };
+    expect(simulation.previewOnly).toBe(true);
+    expect(simulation.localRepair.lateOrderCount).toBeGreaterThanOrEqual(0);
+    expect(simulation.rebuild.lateOrderCount).toBeGreaterThanOrEqual(0);
+    expect(await prisma.machineDowntime.count()).toBe(downtimeCount);
+
+    const orderCount = await prisma.productionOrder.count();
+    const urgentSimulation = (await executeReadTool({
+      name: 'run_simulation',
+      args: {
+        simulationType: 'urgent_order',
+        orderNumber: 'TO-AI-SIM-URGENT',
+        product: 'TP-A',
+        quantity: 4,
+        releaseTime: '2026-08-10T08:00:00+08:00',
+        dueDate: '2026-08-11T17:00:00+08:00',
+        priority: 1,
+      },
+    })) as { previewOnly: boolean; insert: { ok: boolean }; rebuild: { ok: boolean } };
+    expect(urgentSimulation.previewOnly).toBe(true);
+    expect(urgentSimulation.insert.ok || urgentSimulation.rebuild.ok).toBe(true);
+    expect(await prisma.productionOrder.count()).toBe(orderCount);
+  });
+
+  it('修改訂單必須確認,確認後才更新資料', async () => {
+    const before = await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-001' } });
+    const pending = await preparePendingAction({
+      name: 'update_order',
+      args: {
+        orderNumber: 'TO-AI-001',
+        quantity: 7,
+        priority: 1,
+        dueDate: '2026-08-13T17:00:00+08:00',
+      },
+    });
+    expect(pending.toolName).toBe('update_order');
+    expect((await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-001' } }))?.quantity)
+      .toBe(before?.quantity);
+
+    const confirmed = await request(app).post(`/api/ai/actions/${pending.id}/confirm`).send({});
+    expect(confirmed.status).toBe(200);
+    const after = await prisma.productionOrder.findUnique({ where: { orderNumber: 'TO-AI-001' } });
+    expect(after?.quantity).toBe(7);
+    expect(after?.priority).toBe(1);
+    expect(after?.processingTime).toBe(35);
   });
 
   it('取消確認後不會寫入資料', async () => {

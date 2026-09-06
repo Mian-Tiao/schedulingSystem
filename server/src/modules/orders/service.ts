@@ -53,3 +53,31 @@ export async function createProductionOrder(input: OrderInput) {
     },
   });
 }
+
+export async function updateProductionOrder(id: string, input: OrderInput) {
+  const found = await prisma.productionOrder.findUnique({ where: { id } });
+  if (!found) throw new AppError('NOT_FOUND', '找不到訂單', 404);
+
+  const data = orderSchema.parse(input);
+  if (data.orderNumber !== found.orderNumber) {
+    const duplicate = await prisma.productionOrder.findUnique({ where: { orderNumber: data.orderNumber } });
+    if (duplicate) throw new AppError('DUPLICATE_CODE', `訂單編號 ${data.orderNumber} 已存在`, 409);
+  }
+
+  const processingTime = await resolveProcessingTime(data.productId, data.quantity, data.processingTime);
+  return prisma.productionOrder.update({
+    where: { id },
+    data: {
+      orderNumber: data.orderNumber,
+      productId: data.productId,
+      quantity: data.quantity,
+      releaseTime: new Date(data.releaseTime),
+      dueDate: new Date(data.dueDate),
+      processingTime,
+      priority: data.priority,
+      eligibleMachineIds: JSON.stringify(data.eligibleMachineIds),
+      status: data.status,
+      notes: data.notes ?? null,
+    },
+  });
+}

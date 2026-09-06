@@ -96,6 +96,11 @@ export function useOrderMutations() {
       },
     }),
     remove: useMutation({ mutationFn: (id: string) => apiDelete(`/api/orders/${id}`), onSuccess: invalidate }),
+    removeMany: useMutation({
+      // 後端沒有批次刪除端點,前端逐筆平行呼叫既有的單筆刪除 API
+      mutationFn: (ids: string[]) => Promise.all(ids.map((id) => apiDelete(`/api/orders/${id}`))),
+      onSuccess: invalidate,
+    }),
     duplicate: useMutation({ mutationFn: (id: string) => apiPost(`/api/orders/${id}/duplicate`), onSuccess: invalidate }),
     importCsv: useMutation({
       mutationFn: (csv: string) =>

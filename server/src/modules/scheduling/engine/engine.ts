@@ -261,34 +261,29 @@ const comparators: Record<Exclude<AlgorithmId, 'CR'>, OrderComparator> = {
   SPT: sptComparator,
 };
 
-/**
- * 執行單一演算法,回傳任務清單與未排入訂單。
- */
-export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): EngineResult {
-  const horizonEnd = input.anchorTime + (input.horizonDays ?? DEFAULT_HORIZON_DAYS) * DAY_MS;
-  const states = createMachineStates(input.machines, input.anchorTime, input.inProgressTasks, input.inProgressOrders);
-  const productById = new Map<string, Product>(input.products.map((p) => [p.id, p]));
+export interface ScheduleOrdersResult {
+  unscheduledOrders: EngineResult['unscheduledOrders'];
+  completionByOrder: Map<string, number>;
+}
 
-  const tasks: ScheduledTask[] = [];
+/**
+ * 依演算法排序規則,把 pending 訂單逐一安排進 states(就地寫入 tasks、更新 states)。
+ * CR 每安排一筆就依「目前模擬時間」動態重算優先序;其餘演算法排序一次後依序處理。
+ * 從 runAlgorithm 抽出,讓情境模擬「機台故障局部修復」(只重排被故障波及的訂單、
+ * 其餘任務原封不動)能重用同一套安排邏輯,而不是另外刻一份。
+ */
+export function scheduleOrders(
+  pending: ProductionOrder[],
+  algorithm: AlgorithmId,
+  states: Map<string, MachineState>,
+  input: SchedulingInput,
+  horizonEnd: number,
+  tasks: ScheduledTask[],
+  seqByMachine: Map<string, number>,
+  idPrefix: string,
+): ScheduleOrdersResult {
   const unscheduled: EngineResult['unscheduledOrders'] = [];
   const completionByOrder = new Map<string, number>();
-  const seqByMachine = new Map<string, number>();
-
-  const pending = input.orders.filter((o) => {
-    if (!productById.has(o.productId)) {
-      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '找不到訂單對應的產品資料' });
-      return false;
-    }
-    if (o.processingTime <= 0) {
-      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '加工時間必須大於零' });
-      return false;
-    }
-    if (eligibleMachines(o, input.machines).length === 0) {
-      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '沒有可加工此產品的機台' });
-      return false;
-    }
-    return true;
-  });
 
   const scheduleOne = (order: ProductionOrder): boolean => {
     const machines = eligibleMachines(order, input.machines);
@@ -308,7 +303,7 @@ export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): En
       });
       return false;
     }
-    commitPlacement(best.state, order, best.placement, tasks, seqByMachine, algorithm);
+    commitPlacement(best.state, order, best.placement, tasks, seqByMachine, idPrefix);
     completionByOrder.set(order.id, best.placement.productionEnd);
     return true;
   };
@@ -328,6 +323,49 @@ export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): En
     // 使用者自訂 priority 為同分 tie-break(已含於 comparator)
     for (const order of sorted) scheduleOne(order);
   }
+
+  return { unscheduledOrders: unscheduled, completionByOrder };
+}
+
+/**
+ * 執行單一演算法,回傳任務清單與未排入訂單。
+ */
+export function runAlgorithm(input: SchedulingInput, algorithm: AlgorithmId): EngineResult {
+  const horizonEnd = input.anchorTime + (input.horizonDays ?? DEFAULT_HORIZON_DAYS) * DAY_MS;
+  const states = createMachineStates(input.machines, input.anchorTime, input.inProgressTasks, input.inProgressOrders);
+  const productById = new Map<string, Product>(input.products.map((p) => [p.id, p]));
+
+  const tasks: ScheduledTask[] = [];
+  const unscheduled: EngineResult['unscheduledOrders'] = [];
+  const seqByMachine = new Map<string, number>();
+
+  const pending = input.orders.filter((o) => {
+    if (!productById.has(o.productId)) {
+      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '找不到訂單對應的產品資料' });
+      return false;
+    }
+    if (o.processingTime <= 0) {
+      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '加工時間必須大於零' });
+      return false;
+    }
+    if (eligibleMachines(o, input.machines).length === 0) {
+      unscheduled.push({ orderId: o.id, orderNumber: o.orderNumber, reason: '沒有可加工此產品的機台' });
+      return false;
+    }
+    return true;
+  });
+
+  const { unscheduledOrders: pendingUnscheduled, completionByOrder } = scheduleOrders(
+    pending,
+    algorithm,
+    states,
+    input,
+    horizonEnd,
+    tasks,
+    seqByMachine,
+    algorithm,
+  );
+  unscheduled.push(...pendingUnscheduled);
 
   tasks.push(...maintenanceTasks(input, horizonEnd, algorithm));
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../shared/db.js';
 import { AppError, notFound, wrap } from '../../shared/errors.js';
 import { syncOrderStatuses } from '../../shared/orderSync.js';
-import { createProductionOrder, orderSchema, resolveProcessingTime } from './service.js';
+import { createProductionOrder, updateProductionOrder } from './service.js';
 
 export const ordersRouter = Router();
 
@@ -56,29 +56,7 @@ ordersRouter.post(
 ordersRouter.put(
   '/:id',
   wrap(async (req, res) => {
-    const found = await prisma.productionOrder.findUnique({ where: { id: req.params.id } });
-    if (!found) throw notFound('訂單');
-    const data = orderSchema.parse(req.body);
-    if (data.orderNumber !== found.orderNumber) {
-      const dup = await prisma.productionOrder.findUnique({ where: { orderNumber: data.orderNumber } });
-      if (dup) throw new AppError('DUPLICATE_CODE', `訂單編號 ${data.orderNumber} 已存在`, 409);
-    }
-    const processingTime = await resolveProcessingTime(data.productId, data.quantity, data.processingTime);
-    const updated = await prisma.productionOrder.update({
-      where: { id: req.params.id },
-      data: {
-        orderNumber: data.orderNumber,
-        productId: data.productId,
-        quantity: data.quantity,
-        releaseTime: new Date(data.releaseTime),
-        dueDate: new Date(data.dueDate),
-        processingTime,
-        priority: data.priority,
-        eligibleMachineIds: JSON.stringify(data.eligibleMachineIds),
-        status: data.status,
-        notes: data.notes ?? null,
-      },
-    });
+    const updated = await updateProductionOrder(req.params.id!, req.body);
     res.json(updated);
   }),
 );
@@ -144,18 +122,75 @@ ordersRouter.delete(
 
 const importSchema = z.object({ csv: z.string().min(1, '請提供 CSV 內容') });
 
+function parseCsv(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  const pushCell = () => {
+    row.push(cell.trim());
+    cell = '';
+  };
+  const pushRow = () => {
+    pushCell();
+    if (row.some((value) => value.length > 0)) rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < csv.length; i++) {
+    const ch = csv[i]!;
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (csv[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      if (cell.trim().length === 0) {
+        cell = '';
+        inQuotes = true;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === ',') {
+      pushCell();
+    } else if (ch === '\n') {
+      pushRow();
+    } else if (ch === '\r') {
+      pushRow();
+      if (csv[i + 1] === '\n') i += 1;
+    } else {
+      cell += ch;
+    }
+  }
+
+  if (inQuotes) {
+    throw new AppError('CSV_PARSE_ERROR', 'CSV 引號未正確關閉', 400);
+  }
+  if (cell.length > 0 || row.length > 0) pushRow();
+
+  return rows;
+}
+
 ordersRouter.post(
   '/import',
   wrap(async (req, res) => {
     const { csv } = importSchema.parse(req.body);
-    const lines = csv
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    if (lines.length < 2) {
+    const rows = parseCsv(csv);
+    if (rows.length < 2) {
       throw new AppError('CSV_EMPTY', 'CSV 至少需要標題列與一筆資料', 400);
     }
-    const header = lines[0]!.split(',').map((h) => h.trim());
+    const header = rows[0]!.map((h) => h.trim());
     const required = ['orderNumber', 'productCode', 'quantity', 'releaseTime', 'dueDate'];
     for (const col of required) {
       if (!header.includes(col)) {
@@ -169,8 +204,8 @@ ordersRouter.post(
     const machineByCode = new Map(machines.map((m) => [m.machineCode, m]));
 
     const results: { line: number; orderNumber: string; ok: boolean; error?: string }[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i]!.split(',').map((c) => c.trim());
+    for (let i = 1; i < rows.length; i++) {
+      const cols = rows[i]!;
       const orderNumber = cols[idx('orderNumber')] ?? '';
       try {
         const productCode = cols[idx('productCode')] ?? '';

@@ -396,7 +396,13 @@ textarea:focus-visible {
 }
 
 .app-content > * {
-  animation: content-in 280ms ease both;
+  /* 不用 both/forwards:填充模式(fill-mode)結束後仍會讓 transform 停留在
+     matrix(1,0,0,1,0,0)(視覺上等於 none,但計算值不是 none),
+     導致這個節點變成子孫 position:fixed 元素(例如 Modal 遮罩)的
+     containing block,使其被侷限在版面內容區塊裡,而不是整個視窗。
+     動畫沒有 delay,不需要 backwards;結束後也只是要恢復原本樣式,
+     不需要 forwards,所以用預設 fill-mode(none)即可。 */
+  animation: content-in 280ms ease;
 }
 
 @keyframes content-in {

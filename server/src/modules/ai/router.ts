@@ -68,7 +68,7 @@ async function askAi(
   }
   try {
     const availableTools = options.allowActions === false
-      ? AI_TOOL_DECLARATIONS.filter((tool) => tool.name?.startsWith('list_'))
+      ? AI_TOOL_DECLARATIONS.filter((tool) => !isMutationTool({ name: tool.name }))
       : AI_TOOL_DECLARATIONS;
     const chat = client.chats.create({
       model: MODEL(),
