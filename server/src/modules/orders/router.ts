@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../shared/db.js';
 import { AppError, notFound, wrap } from '../../shared/errors.js';
 import { syncOrderStatuses } from '../../shared/orderSync.js';
-import { createProductionOrder, orderSchema, resolveProcessingTime } from './service.js';
+import { createProductionOrder, updateProductionOrder } from './service.js';
 
 export const ordersRouter = Router();
 
@@ -56,29 +56,7 @@ ordersRouter.post(
 ordersRouter.put(
   '/:id',
   wrap(async (req, res) => {
-    const found = await prisma.productionOrder.findUnique({ where: { id: req.params.id } });
-    if (!found) throw notFound('訂單');
-    const data = orderSchema.parse(req.body);
-    if (data.orderNumber !== found.orderNumber) {
-      const dup = await prisma.productionOrder.findUnique({ where: { orderNumber: data.orderNumber } });
-      if (dup) throw new AppError('DUPLICATE_CODE', `訂單編號 ${data.orderNumber} 已存在`, 409);
-    }
-    const processingTime = await resolveProcessingTime(data.productId, data.quantity, data.processingTime);
-    const updated = await prisma.productionOrder.update({
-      where: { id: req.params.id },
-      data: {
-        orderNumber: data.orderNumber,
-        productId: data.productId,
-        quantity: data.quantity,
-        releaseTime: new Date(data.releaseTime),
-        dueDate: new Date(data.dueDate),
-        processingTime,
-        priority: data.priority,
-        eligibleMachineIds: JSON.stringify(data.eligibleMachineIds),
-        status: data.status,
-        notes: data.notes ?? null,
-      },
-    });
+    const updated = await updateProductionOrder(req.params.id!, req.body);
     res.json(updated);
   }),
 );
