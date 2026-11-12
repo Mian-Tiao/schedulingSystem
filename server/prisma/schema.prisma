@@ -19,10 +19,20 @@ model Product {
   /// 每單位加工分鐘數
   defaultProcessingTime Float
   defaultCleaningTime   Float    @default(0)
+  // ── 工廠版欄位 ──
+  customer              String?
+  /// 穴數:一模產出本品號的個數
+  cavityCount           Int?
+  /// 秒數:單模週期
+  cycleSeconds          Float?
+  material              String?
+  /// 指向模具;新增產品時自動建一副
+  moldId                String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  orders ProductionOrder[]
+  mold     Mold?    @relation(fields: [moldId], references: [id])
+  orders   ProductionOrder[]
   bomItems BomItem[]
 }
 
@@ -39,10 +49,39 @@ model Machine {
   /// JSON WorkingHours:{ mon..sun: [{start,end}] }
   workingHours        String
   status              String   @default("available") // available | maintenance | disabled
+  // ── 工廠版欄位 ──
+  /// 鎖模力(噸)
+  tonnage             Int?
+  /// 油壓 | 電機
+  machineType         String?
+  manufacturer        String?
+  /// 每日可用時數(算每日產量用)
+  dailyHours          Float    @default(22)
+  /// 建議顧機人數(選做)
+  suggestedOperators  Int?
+  /// 射出容量(g),先存不卡
+  shotCapacityG       Int?
+  /// JSON string[]:可做料
+  allowedMaterials    String   @default("[]")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   downtimes MachineDowntime[]
+}
+
+model Mold {
+  id              String   @id @default(cuid())
+  name            String
+  /// 副數:有幾副;=N 時可同時上 N 台機
+  copies          Int      @default(1)
+  /// 需求噸數:決定能上多大噸數的機台
+  requiredTonnage Int?
+  /// JSON string[]:可上機台 id(工廠維護的能力)
+  allowedMachines String   @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products Product[]
 }
 
 model MachineDowntime {
@@ -81,6 +120,16 @@ model ProductionOrder {
   eligibleMachineIds String   @default("[]")
   status             String   @default("pending") // pending | scheduled | inProgress | completed | cancelled
   notes              String?
+  // ── 工廠版欄位 ──
+  customer           String?
+  plant              String?
+  urgent             Boolean  @default(false)
+  /// 廠內 | 廠外(廠外不佔機台)
+  orderType          String   @default("廠內")
+  /// 穴數/秒數/需求噸數:匯入時由產品與其模具帶入,以製令上的為準
+  cavityCount        Int?
+  cycleSeconds       Float?
+  requiredTonnage    Int?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
