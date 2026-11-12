@@ -108,12 +108,15 @@ export function Modal({
   onClose,
   children,
   wide,
+  closeOnBackdrop = false,
 }: {
   title: string;
   open: boolean;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  /** 點背景(旁邊)是否關閉;預設 false,避免填到一半誤關 */
+  closeOnBackdrop?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -126,7 +129,7 @@ export function Modal({
 
   if (!open) return null;
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={closeOnBackdrop ? onClose : undefined}>
       <div className={`modal-panel ${wide ? 'is-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div>
