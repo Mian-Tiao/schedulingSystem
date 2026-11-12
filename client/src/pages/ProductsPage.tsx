@@ -24,6 +24,15 @@ interface FormState {
   description: string;
   defaultProcessingTime: string;
   defaultCleaningTime: string;
+  // ── 射出 ──
+  customer: string;
+  cavityCount: string;
+  cycleSeconds: string;
+  material: string;
+  // ── 模具 ──
+  moldCopies: string;
+  moldRequiredTonnage: string;
+  moldAllowedMachines: string[];
 }
 
 const emptyForm: FormState = {
@@ -32,6 +41,13 @@ const emptyForm: FormState = {
   description: '',
   defaultProcessingTime: '10',
   defaultCleaningTime: '0',
+  customer: '',
+  cavityCount: '',
+  cycleSeconds: '',
+  material: '',
+  moldCopies: '1',
+  moldRequiredTonnage: '',
+  moldAllowedMachines: [],
 };
 
 export function ProductsPage() {
@@ -52,6 +68,15 @@ export function ProductsPage() {
       description: form.description.trim() || null,
       defaultProcessingTime: Number(form.defaultProcessingTime),
       defaultCleaningTime: Number(form.defaultCleaningTime),
+      customer: form.customer.trim() || null,
+      cavityCount: form.cavityCount ? Number(form.cavityCount) : null,
+      cycleSeconds: form.cycleSeconds ? Number(form.cycleSeconds) : null,
+      material: form.material.trim() || null,
+      mold: {
+        copies: form.moldCopies ? Number(form.moldCopies) : 1,
+        requiredTonnage: form.moldRequiredTonnage ? Number(form.moldRequiredTonnage) : null,
+        allowedMachines: form.moldAllowedMachines,
+      },
     };
     try {
       if (form.id) await update.mutateAsync({ id: form.id, ...body });
@@ -115,6 +140,12 @@ export function ProductsPage() {
                     <td className="px-4 py-2.5">
                       {p.productName}
                       {p.description && <span className="ml-2 text-xs text-slate-400">{p.description}</span>}
+                      {(p.cavityCount != null || p.customer) && (
+                        <span className="ml-2 text-xs text-slate-400">
+                          {p.cavityCount != null && `${p.cavityCount}穴·${p.cycleSeconds}秒`}
+                          {p.customer && ` · ${p.customer}`}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5">{p.defaultProcessingTime} 分鐘</td>
                     <td className="px-4 py-2.5">{p.defaultCleaningTime} 分鐘</td>
@@ -143,6 +174,13 @@ export function ProductsPage() {
                             description: p.description ?? '',
                             defaultProcessingTime: String(p.defaultProcessingTime),
                             defaultCleaningTime: String(p.defaultCleaningTime),
+                            customer: p.customer ?? '',
+                            cavityCount: p.cavityCount != null ? String(p.cavityCount) : '',
+                            cycleSeconds: p.cycleSeconds != null ? String(p.cycleSeconds) : '',
+                            material: p.material ?? '',
+                            moldCopies: p.mold?.copies != null ? String(p.mold.copies) : '1',
+                            moldRequiredTonnage: p.mold?.requiredTonnage != null ? String(p.mold.requiredTonnage) : '',
+                            moldAllowedMachines: p.mold?.allowedMachines ?? [],
                           })
                         }
                       >
@@ -206,6 +244,75 @@ export function ProductsPage() {
                 />
               </Field>
             </div>
+            {/* ── 射出成型 ── */}
+            <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold text-slate-600">射出成型(選填)</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="客戶">
+                  <input className={inputCls} value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })} />
+                </Field>
+                <Field label="材質">
+                  <input className={inputCls} value={form.material} onChange={(e) => setForm({ ...form, material: e.target.value })} />
+                </Field>
+                <Field label="穴數" hint="一模產出幾個">
+                  <input type="number" min="1" className={inputCls} value={form.cavityCount} onChange={(e) => setForm({ ...form, cavityCount: e.target.value })} />
+                </Field>
+                <Field label="秒數(單模週期)" hint="一模幾秒">
+                  <input type="number" min="0" step="0.1" className={inputCls} value={form.cycleSeconds} onChange={(e) => setForm({ ...form, cycleSeconds: e.target.value })} />
+                </Field>
+              </div>
+              {form.cavityCount && form.cycleSeconds && (
+                <p className="text-xs text-slate-400">加工時間 ≈ ⌈數量 ÷ {form.cavityCount}⌉ 模 × {form.cycleSeconds} 秒</p>
+              )}
+            </div>
+
+            {/* ── 模具 ── */}
+            <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold text-slate-600">模具(系統自動建一副,可在此調整)</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="副數" hint="有幾副;=2 可同時上兩台機">
+                  <input type="number" min="1" className={inputCls} value={form.moldCopies} onChange={(e) => setForm({ ...form, moldCopies: e.target.value })} />
+                </Field>
+                <Field label="需求噸數" hint="要上噸數 ≥ 此值的機台">
+                  <input type="number" min="0" className={inputCls} value={form.moldRequiredTonnage} onChange={(e) => setForm({ ...form, moldRequiredTonnage: e.target.value })} />
+                </Field>
+              </div>
+              <div>
+                <span className="mb-1.5 block text-sm text-slate-600">可上機台(留空 = 只看噸數)</span>
+                {!machines || machines.length === 0 ? (
+                  <p className="text-xs text-slate-400">尚無機台,請先到「機台管理」建立</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {machines.map((m) => {
+                      const checked = form.moldAllowedMachines.includes(m.id);
+                      return (
+                        <label
+                          key={m.id}
+                          className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors ${
+                            checked ? 'border-blue-400 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setForm({
+                                ...form,
+                                moldAllowedMachines: checked
+                                  ? form.moldAllowedMachines.filter((x) => x !== m.id)
+                                  : [...form.moldAllowedMachines, m.id],
+                              })
+                            }
+                          />
+                          {m.machineCode}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="secondary" onClick={() => setForm(null)}>
                 取消

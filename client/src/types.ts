@@ -18,6 +18,14 @@ export interface DaySegment {
 export type WeekKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export type WorkingHours = Record<WeekKey, DaySegment[]>;
 
+export interface Mold {
+  id?: string;
+  name?: string;
+  copies: number;
+  requiredTonnage: number | null;
+  allowedMachines: string[];
+}
+
 export interface Product {
   id: string;
   productCode: string;
@@ -25,6 +33,13 @@ export interface Product {
   description: string | null;
   defaultProcessingTime: number;
   defaultCleaningTime: number;
+  // ── 射出版欄位 ──
+  customer?: string | null;
+  cavityCount?: number | null;
+  cycleSeconds?: number | null;
+  material?: string | null;
+  moldId?: string | null;
+  mold?: Mold | null;
 }
 
 export interface Downtime {
