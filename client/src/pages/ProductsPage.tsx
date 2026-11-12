@@ -90,9 +90,13 @@ export function ProductsPage() {
   if (isLoading) return <Loading />;
   if (error) return <ErrorState message={(error as Error).message} />;
 
-  const unsupportedCount = (products ?? []).filter(
-    (product) => !(machines ?? []).some((machine) => machine.supportedProductIds.includes(product.id)),
-  ).length;
+  // 可上機台:優先看模具的 allowedMachines(射出版),否則退回機台的 supportedProductIds(學校版)
+  const machinesForProduct = (product: Product) => {
+    const moldIds = product.mold?.allowedMachines ?? [];
+    if (moldIds.length > 0) return (machines ?? []).filter((m) => moldIds.includes(m.id));
+    return (machines ?? []).filter((m) => m.supportedProductIds.includes(product.id));
+  };
+  const unsupportedCount = (products ?? []).filter((product) => machinesForProduct(product).length === 0).length;
   const averageProcessingTime =
     products && products.length > 0
       ? Math.round(products.reduce((sum, product) => sum + product.defaultProcessingTime, 0) / products.length)
@@ -133,7 +137,7 @@ export function ProductsPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {products.map((p) => {
-                const supported = (machines ?? []).filter((m) => m.supportedProductIds.includes(p.id));
+                const supported = machinesForProduct(p);
                 return (
                   <tr key={p.id} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5 font-medium text-slate-700">{p.productCode}</td>
