@@ -139,7 +139,16 @@ productsRouter.delete(
     if (orderCount > 0) {
       throw new AppError('PRODUCT_IN_USE', `此產品仍有 ${orderCount} 張訂單使用中,請先刪除相關訂單`, 409);
     }
-    await prisma.product.delete({ where: { id: req.params.id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.product.delete({ where: { id: req.params.id } });
+      // 連帶刪自動建的模具,但共模(其他產品仍指向同一副)時保留
+      if (found.moldId) {
+        const stillUsed = await tx.product.count({ where: { moldId: found.moldId } });
+        if (stillUsed === 0) {
+          await tx.mold.delete({ where: { id: found.moldId } });
+        }
+      }
+    });
     res.status(204).end();
   }),
 );
